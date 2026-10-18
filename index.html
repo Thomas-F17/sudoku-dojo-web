@@ -7,7 +7,8 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
 <meta name="apple-mobile-web-app-title" content="Sudoku Dojo">
-<meta name="theme-color" content="#F3F6FA">
+<meta name="theme-color" content="#F3F6FA" media="(prefers-color-scheme: light)" data-scheme="light">
+<meta name="theme-color" content="#0F141C" media="(prefers-color-scheme: dark)" data-scheme="dark">
 <title>Sudoku Dojo</title>
 <style>
 :root{
@@ -929,9 +930,14 @@ DB.settings = Object.assign({}, DEF.settings, DB.settings);
 const S = DB.settings;
 function save() { try { localStorage.setItem('dojo.v1', JSON.stringify(DB)); } catch (e) { /* storage unavailable: play on */ } }
 
+const THEME_BG = { light: '#F3F6FA', dark: '#0F141C' };
 function applyTheme() {
   if (S.theme === 'system') delete document.documentElement.dataset.theme;
   else document.documentElement.dataset.theme = S.theme;
+  /* the phone's top bar takes its colour from theme-color: follow the app's theme, not only the system's */
+  for (const m of document.querySelectorAll('meta[name="theme-color"]')) {
+    m.setAttribute('content', THEME_BG[S.theme === 'system' ? m.dataset.scheme : S.theme]);
+  }
 }
 
 /* ---------------- content ---------------- */
