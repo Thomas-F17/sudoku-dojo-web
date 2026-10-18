@@ -1,0 +1,15 @@
+{
+  "name": "Sudoku Dojo",
+  "short_name": "Sudoku Dojo",
+  "description": "Ad-free sudoku with paper mode and a training dojo for every level.",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#F3F6FA",
+  "theme_color": "#F3F6FA",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
