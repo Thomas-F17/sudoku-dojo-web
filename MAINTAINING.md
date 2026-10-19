@@ -19,6 +19,10 @@ Do this before you build up much progress. On iPhone, the Home Screen app and Sa
 
 ## Updating the app
 
+Updating never deletes players' progress. Progress is saved in the browser under your site's address (`YOUR-USERNAME.github.io`), not inside the files you upload, so replacing `index.html` leaves it untouched. It only goes if a player deletes the app from their Home Screen, clears Safari's website data, or the address changes (renaming your GitHub account, for example). New versions add any new kinds of progress alongside the old ones, and the app keeps a safety copy of the previous launch's data.
+
+To upload an update:
+
 Upload the new `index.html` over the old one (repo page → **Add file → Upload files**). Players get the new version the next time they open the app; the first launch after an update still shows the old one while the new one downloads in the background.
 
 If you ever add new files that must work offline, add them to the `SHELL` list in `sw.js` and change `CACHE` to `sudoku-dojo-v2`.
@@ -26,6 +30,10 @@ If you ever add new files that must work offline, add them to the `SHELL` list i
 ## Donations
 
 Open `index.html` on GitHub, click the pencil icon, search for `DONATE_URL`, and replace the placeholder with your page: Ko-fi or Buy Me a Coffee take a few minutes to set up; GitHub Sponsors needs an application first. On the web, Apple's in-app purchase rules don't apply, so a plain link is fine.
+
+## Things that change with the puzzle generator
+
+Puzzle codes and Today's puzzle are produced by the generator, so whenever the generator changes, an old code gives a different grid than before. Within one version, everyone who enters the same code gets the same grid.
 
 ## Files
 

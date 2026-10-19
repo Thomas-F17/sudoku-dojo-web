@@ -112,7 +112,9 @@ h1,h2,h3{font-family:var(--round); margin:0; letter-spacing:-.01em}
 .cell.c8{border-right:0} .cell.r8{border-bottom:0}
 .cell.c2,.cell.c5{border-right:2px solid var(--line-thick)} .cell.r2,.cell.r5{border-bottom:2px solid var(--line-thick)}
 .cell.peer{background:var(--peer)} .cell.same{background:var(--same)} .cell.sel{background:var(--sel)}
+.cell.ray{background:color-mix(in srgb,var(--hint) 22%,var(--surface))}
 .cell.hunit{background:color-mix(in srgb,var(--hint) 45%,var(--surface))}
+.cell.xcell{background:repeating-linear-gradient(135deg,color-mix(in srgb,var(--err) 30%,var(--surface)) 0 3px,var(--err-soft) 3px 7px)}
 .cell.hcell{background:var(--hint)}
 .cell.colA{background:var(--colA)} .cell.colB{background:var(--colB)}
 .cell.user{color:var(--pen)} .cell.err{color:var(--err)} .cell.errbg{background:var(--err-soft)} .cell.okbg{background:var(--ok-soft)}
@@ -272,6 +274,16 @@ h1,h2,h3{font-family:var(--round); margin:0; letter-spacing:-.01em}
 .install{position:relative; border:1.5px solid var(--pen-soft)}
 .install .x{position:absolute; top:4px; right:4px; font-size:22px; color:var(--muted)}
 .install h3{padding-right:36px}
+.coach.lesson{max-height:42vh; overflow-y:auto}
+.coach.lesson p{font-size:15px}
+.lessonrow .ico{color:var(--ok)}
+.done{width:26px; height:26px; border-radius:13px; background:var(--ok-soft); color:var(--ok); display:grid; place-items:center; flex:none}
+.done svg{width:14px; height:14px}
+.complist{display:flex; flex-wrap:wrap; gap:6px; margin-top:10px}
+.complist .chip{height:30px; padding:0 10px; font-size:13px}
+.complist .chip svg{width:13px; height:13px}
+.focus{border:1.5px solid var(--pen-soft)}
+.btn.mini-btn{width:auto; height:36px; padding:0 18px; font-size:14px; margin:0}
 @media (prefers-reduced-motion: reduce){*{animation:none !important; transition:none !important}}
 @media (max-height:700px){ .pad button{height:52px; font-size:30px} .tools{padding-top:8px} .tool .ic{width:42px;height:42px} }
 </style>
@@ -817,7 +829,7 @@ function describe(st) {
 const LEVELS = [
   { id: 'easy',    name: 'Easy',    minTier: 0, maxTier: 0, clues: [38, 41] },
   { id: 'medium',  name: 'Medium',  minTier: 0, maxTier: 0, clues: [30, 33] },
-  { id: 'hard',    name: 'Hard',    minTier: 1, maxTier: 1, clues: [24, 30] },
+  { id: 'hard',    name: 'Hard',    minTier: 1, maxTier: 1, clues: [26, 28], stop: true },
   { id: 'expert',  name: 'Expert',  minTier: 2, maxTier: 2, clues: [22, 28] },
   { id: 'master',  name: 'Master',  minTier: 3, maxTier: 3, clues: [21, 27] },
   { id: 'extreme', name: 'Extreme', minTier: 4, maxTier: 4, clues: [20, 26] },
@@ -826,26 +838,45 @@ const LEVEL = {}; LEVELS.forEach((l, k) => { l.index = k; LEVEL[l.id] = l; });
 
 function randomSolution(rng) { return solveModel(new Array(81).fill(0), rng); }
 
-/* one attempt: dig holes in symmetric pairs, keeping (a) uniqueness by the model
-   and (b) logic-solvability within the level's technique tier */
+/* one attempt. Clues are removed one cell at a time, always trying the cell whose
+   digit (and box) currently has the most clues first, so the givens end up spread
+   evenly over the nine digits and nine boxes. A removal is kept only if
+   (a) the model still has exactly one solution and (b) the logic solver can still
+   finish it with the level's techniques. One full pass makes the grid minimal:
+   every remaining clue is needed for (a) or (b), because removing clues never
+   makes either test easier to pass. */
 function digAttempt(level, rng) {
   const L = LEVEL[level];
   const sol = randomSolution(rng), p = sol.slice();
   const target = L.clues[0] + ((rng() * (L.clues[1] - L.clues[0] + 1)) | 0);
-  const order = shuffle([...Array(41).keys()], rng);
+  const stopAt = (L.maxTier === 0 || L.stop) ? target : 17;
+  const cnt = new Array(10).fill(9), boxc = new Array(9).fill(9), tried = new Uint8Array(81);
+  const jitter = Array.from({ length: 81 }, () => rng());
   let clues = 81;
-  const stopAt = L.maxTier === 0 ? target : 17;
-  for (const i of order) {
-    if (clues <= stopAt) break;
-    const j = 80 - i, a = p[i], b = p[j];
-    p[i] = 0; p[j] = 0;
-    const removed = i === j ? 1 : 2;
-    if (isUnique(p) && grade(p, L.maxTier).solved) clues -= removed;
-    else { p[i] = a; p[j] = b; }
+  while (clues > stopAt) {
+    let best = -1, bs = -1;
+    for (let i = 0; i < 81; i++) {
+      if (!p[i] || tried[i]) continue;
+      const sc = cnt[p[i]] * 2 + boxc[BOX[i]] + jitter[i] * 2.5;
+      if (sc > bs) { bs = sc; best = i; }
+    }
+    if (best < 0) break;
+    tried[best] = 1;
+    const v = p[best]; p[best] = 0;
+    if (isUnique(p) && grade(p, L.maxTier).solved) { clues--; cnt[v]--; boxc[BOX[best]]--; }
+    else p[best] = v;
   }
   const gr = grade(p, L.maxTier);
-  return { puzzle: p, solution: sol, grade: gr, clues };
+  return { puzzle: p, solution: sol, grade: gr, clues, balance: balanceOf(p) };
 }
+function balanceOf(p) {
+  const c = new Array(10).fill(0), b = new Array(9).fill(0);
+  for (let i = 0; i < 81; i++) if (p[i]) { c[p[i]]++; b[BOX[i]]++; }
+  const ds = c.slice(1);
+  return { min: Math.min(...ds), max: Math.max(...ds), boxMin: Math.min(...b), boxMax: Math.max(...b) };
+}
+const balanced = r => r.balance.min >= 1 && r.balance.max - r.balance.min <= 3 && r.balance.boxMin >= 1;
+function accept(L, r) { return r.grade.solved && r.grade.tier >= L.minTier && balanced(r) && ((L.maxTier > 0 && !L.stop) || r.clues <= L.clues[1]); }
 
 function generate(level, seed, opts) {
   opts = opts || {};
@@ -854,8 +885,7 @@ function generate(level, seed, opts) {
   for (let t = 0; t < maxTries; t++) {
     const r = digAttempt(level, rng);
     if (!r.grade.solved) continue;
-    const ok = r.grade.tier >= L.minTier && r.clues <= L.clues[1] + (L.maxTier === 0 ? 0 : 6);
-    if (ok) return Object.assign(r, { level, seed, tries: t + 1 });
+    if (accept(L, r)) return Object.assign(r, { level, seed, tries: t + 1 });
     if (!best || r.grade.tier > best.grade.tier) best = r;
   }
   return Object.assign(best, { level, seed, tries: maxTries, fallback: true });
@@ -872,7 +902,7 @@ function generateAsync(level, seed, onProgress) {
         t++;
         const r = digAttempt(level, rng);
         if (r.grade.solved) {
-          if (r.grade.tier >= L.minTier && r.clues <= L.clues[1] + (L.maxTier === 0 ? 0 : 6)) return resolve(Object.assign(r, { level, seed, tries: t }));
+          if (accept(L, r)) return resolve(Object.assign(r, { level, seed, tries: t }));
           if (!best || r.grade.tier > best.grade.tier) best = r;
         }
         if (t >= 600) return resolve(Object.assign(best, { level, seed, tries: t, fallback: true }));
@@ -890,7 +920,7 @@ const API = {
   modelSolve, solveModel, isUnique, satisfiesModel,
   makeState, cloneState, placeIn, applyStep, solvedState, brokenState,
   TECHS, TECH, nextStep, allSteps, grade, describe,
-  LEVELS, LEVEL, randomSolution, digAttempt, generate, generateAsync,
+  LEVELS, LEVEL, randomSolution, digAttempt, generate, generateAsync, balanceOf,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.Engine = API;
 })(typeof self !== 'undefined' ? self : this);
@@ -920,13 +950,20 @@ const DONATE_URL = 'https://buymeacoffee.com/YOUR-NAME';
 const DEF = {
   settings: { autoNotes: true, hlPeers: true, hlSame: true, conflicts: false, counts: false, theme: 'system', lastLevel: 'medium', lastMode: 'paper', trainLevel: 'easy' },
   stats: {}, drills: {}, game: null, daily: {}, tip: null,
-  log: [], dlog: [], ui: { installDismissed: false, lastBackup: 0 },
+  log: [], dlog: [], ui: { installDismissed: false, lastBackup: 0 }, lessons: {}, v: 2,
 };
-let DB;
-try { DB = JSON.parse(localStorage.getItem('dojo.v1') || 'null'); } catch (e) { DB = null; }
+let DB, RAW = null;
+try { RAW = localStorage.getItem('dojo.v1'); } catch (e) { RAW = null; }
+try { DB = JSON.parse(RAW || 'null'); } catch (e) {
+  DB = null;  // unreadable: park it under another key rather than overwrite it
+  try { localStorage.setItem('dojo.v1.unreadable.' + Date.now(), RAW); } catch (e2) { /* ignore */ }
+}
+try { if (RAW && DB) localStorage.setItem('dojo.v1.previous', RAW); } catch (e) { /* storage full: skip the safety copy */ }
 if (!DB || typeof DB !== 'object') DB = JSON.parse(JSON.stringify(DEF));
 for (const k in DEF) if (DB[k] === undefined) DB[k] = JSON.parse(JSON.stringify(DEF[k]));
 DB.settings = Object.assign({}, DEF.settings, DB.settings);
+DB.ui = Object.assign({}, DEF.ui, DB.ui);
+DB.v = 2;   // v1 (first release) data needs no conversion: new fields are simply added
 const S = DB.settings;
 function save() { try { localStorage.setItem('dojo.v1', JSON.stringify(DB)); } catch (e) { /* storage unavailable: play on */ } }
 
@@ -1165,8 +1202,9 @@ function parseCode(code) {
 /* ---------------- PLAY tab ---------------- */
 function renderPlay() {
   const body = $('#play-body'), g = DB.game, di = dailyInfo(), dd = DB.daily[di.key];
-  const suggestion = suggestDrill();
-  body.innerHTML = installCardHTML() + `
+  const focus = focusCardHTML('play');
+  const suggestion = focus ? null : suggestDrill();
+  body.innerHTML = installCardHTML() + (focus && !DB.log.length ? focus : '') + `
     <div class="hero">
       ${g ? `<h1>Pick up where you left off</h1>
         <p><span class="belt" style="display:inline-block;vertical-align:1px;margin-right:12px;${beltVar(g.level)}"></span>${LVL[g.level].name}, ${g.mode === 'paper' ? 'paper mode' : 'classic'}, ${fmt(g.elapsed)}</p>
@@ -1185,6 +1223,7 @@ function renderPlay() {
         ${dd ? `<span class="chip">Solved in ${fmt(dd.time)}</span>` : `<button class="btn ghost" style="width:auto;padding:0 20px;height:40px;font-size:15px" id="h-daily">Play</button>`}
       </div>
     </div>
+    ${focus && DB.log.length ? focus : ''}
     ${suggestion ? `<div class="card">
       <div class="row">
         <div class="drill" style="padding:0;border:0;flex:1"><span class="ico">${ICON[suggestion.d.kind]}</span><span class="meta"><b>${esc(suggestion.d.title)}</b><span>${esc(suggestion.why)}</span></span></div>
@@ -1199,6 +1238,7 @@ function renderPlay() {
   if (suggestion) $('#h-drill').onclick = () => openDrillIntro(suggestion.d.id);
   $('#h-code').onclick = codeSheet;
   wireInstallCard();
+  wireFocus(body);
 }
 
 function suggestDrill() {
@@ -1247,30 +1287,6 @@ function codeSheet() {
   };
 }
 
-/* ---------------- TRAIN tab ---------------- */
-function renderTrain() {
-  const lv = S.trainLevel || 'easy', body = $('#train-body');
-  const max = DRILLS[lv].length * 3, got = levelStars(lv);
-  const techs = [...new Set(DRILLS[lv].filter(d => d.kind === 'find').flatMap(d => d.techs))].map(t => E.TECH[t].name);
-  body.innerHTML = `
-    <div class="beltbar">${LEVEL_IDS.map(id => `<button data-l="${id}" class="${id === lv ? 'on' : ''}">${beltHTML(id)}${LVL[id].name}</button>`).join('')}</div>
-    <div class="beltpanel" style="${beltVar(lv)}">
-      <div class="stripe"></div>
-      <h2>${LVL[lv].name} belt</h2>
-      <div class="sub" style="max-width:70%">${techs.length ? esc(techs.join(', ')) : 'Speed, scanning and accuracy'}</div>
-      <div class="bar"><i style="width:${Math.round(got / max * 100)}%"></i></div>
-      <div class="small" style="margin-top:6px">${got} of ${max} stars</div>
-    </div>
-    <div class="card drill-list">${DRILLS[lv].map(d => {
-      const b = drillBest(d.id);
-      return `<button class="drill" data-id="${d.id}"><span class="ico">${ICON[d.kind]}</span><span class="meta"><b>${esc(d.title)}</b><span>${esc(d.blurb)}</span></span>${starsHTML(b ? b.stars : 0)}</button>`;
-    }).join('')}</div>
-    <p class="small" style="text-align:center;margin-top:16px">Gold, silver and bronze stars come from your speed. Three stars on every drill earns the belt.</p>`;
-  centerOn($('.beltbar', body));
-  $('.beltbar', body).onclick = e => { const b = e.target.closest('button'); if (!b) return; S.trainLevel = b.dataset.l; save(); renderTrain(); };
-  $('.drill-list', body).onclick = e => { const b = e.target.closest('.drill'); if (b) openDrillIntro(b.dataset.id); };
-}
-
 function bestLine(d, b) {
   if (!b) return 'Not tried yet.';
   if (d.kind === 'sprint') return `Best: ${b.score} digits.`;
@@ -1283,22 +1299,6 @@ function parLine(d) {
   if (d.kind === 'run') return `Gold under ${fmt(a * 1000)}, silver under ${fmt(b * 1000)}.`;
   return `Gold under ${a} s on average, silver under ${b} s.`;
 }
-function openDrillIntro(id) {
-  const d = DRILL_BY_ID[id], b = drillBest(id);
-  const learn = d.kind === 'find' ? (d.techs.length === 1 ? LEARN[d.techs[0]] : `Any of: ${d.techs.map(t => E.TECH[t].name).join(', ')}. The position is chosen so that nothing easier works.`) : KIND_LEARN[d.kind];
-  const how = d.kind === 'find'
-    ? (d.notes ? `${d.n} positions with full notes. Tap a cell, then the candidate the pattern removes from it.` : `${d.n} positions, no notes. Tap the cell, then its digit.`)
-    : '';
-  const el = sheet(`
-    <h2>${esc(d.title)}</h2>
-    <div class="row" style="margin-top:2px">${beltHTML(d.lv)}<span class="sub">${LVL[d.lv].name} training</span></div>
-    <div class="learn">${esc(learn)}</div>
-    ${how ? `<p class="small" style="margin-top:10px">${esc(how)}</p>` : ''}
-    <p class="small">${esc(parLine(d))} ${esc(bestLine(d, b))}</p>
-    <button class="btn primary" id="di-go">Start</button>`);
-  $('#di-go', el).onclick = () => { closeSheet(); startDrill(id); };
-}
-
 function supportSheet() {
   const native = window.DojoNative && typeof window.DojoNative.tip === 'function';
   const el = sheet(`
@@ -1453,6 +1453,7 @@ function gameInput(d) {
     if (G.vals[i]) return;
     G.undo.push({ i, v: G.vals[i], n: G.notes[i], removed: [] });
     G.notes[i] ^= E.BIT(d);
+    G.hist.push({ t: Math.round(G.elapsed), i, n: 1 });
   } else {
     if (G.vals[i] === d) return;
     const entry = { i, v: G.vals[i], n: G.notes[i], removed: [] };
@@ -1477,12 +1478,14 @@ function eraseCell() {
   if (G.mode === 'classic' && G.vals[i] === G.sol[i]) return;
   if (!G.vals[i] && !G.notes[i]) return;
   G.undo.push({ i, v: G.vals[i], n: G.notes[i], removed: [] });
+  if (G.vals[i]) G.hist.push({ t: Math.round(G.elapsed), i, d: 0 });
   G.vals[i] = 0; G.notes[i] = 0; G.hl = null;
   renderGame(); persistGame();
 }
 function undo() {
   if (!G || G.done || G.paused) return;
   const u = G.undo.pop(); if (!u) return;
+  if (G.vals[u.i] !== u.v) G.hist.push({ t: Math.round(G.elapsed), i: u.i, d: u.v });
   G.vals[u.i] = u.v; G.notes[u.i] = u.n;
   if (u.d) for (const p of u.removed) G.notes[p] |= E.BIT(u.d);
   G.sel = u.i; G.hl = null;
@@ -1540,8 +1543,10 @@ function gameHint() {
   G.hl = { cells: new Set(first.hl.cells), units: new Set((first.hl.units || []).flatMap(u => E.UNITS[u])) };
   const chain = steps.length > 1 ? `<p style="margin-top:6px" class="small">${steps.length > 2 ? `After ${steps.length - 2} more step${steps.length > 3 ? 's' : ''}, that` : 'That'} unlocks a digit: ${esc(E.describe(place))}</p>` : '';
   showCoach($('#g-coach'), `<h4><span class="dot"></span>${esc(T.name)}</h4><p>${esc(E.describe(first))}</p>${chain}
+    ${LESSONS[first.t] ? `<button class="linkbtn" id="hc-learn" style="margin-top:8px">${lessonDone(first.t) ? 'Review' : 'Learn'} the ${esc(T.name)} lesson</button>` : ''}
     <div class="actions"><button class="btn ghost" id="hc-close">Got it</button>${place ? `<button class="btn primary" id="hc-place">Place ${place.p[1]} in ${E.cellName(place.p[0])}</button>` : ''}</div>`, 'float');
   $('#hc-close').onclick = () => { hideCoach(); };
+  if ($('#hc-learn')) $('#hc-learn').onclick = () => { G.hl = null; hideCoach(); G.paused = true; persistGame(); startLesson(first.t, 'game'); };
   if (place) $('#hc-place').onclick = () => { G.sel = place.p[0]; G.hl = null; hideCoach(); const nm = G.notesMode; G.notesMode = false; gameInput(place.p[1]); if (G) G.notesMode = nm; renderGame(); };
   renderGame(); persistGame();
 }
@@ -1602,7 +1607,7 @@ function winGame() {
   }
   const an = analyse(G);
   DB.log.push({ ts: Date.now(), l: G.level, m: G.mode, t: Math.round(t), c: clean ? 1 : 0, h: G.hints,
-    w: an.stalls.map(s => s.singles ? 'scan' : (s.tech || 'trial')), dr: G.drill || undefined });
+    w: an.stalls.map(s => s.kind), dr: G.drill || undefined });
   if (G.drill) DB.dlog.push({ ts: Date.now(), id: G.drill, s: t / 1000, st: stars });
   trimLogs();
   DB.tip = an.tip || DB.tip;
@@ -1614,32 +1619,52 @@ function winGame() {
 /* ---------- post-game coaching: where did the time go? ---------- */
 function analyse(g) {
   const first = new Map();
-  for (const h of g.hist) if (h.d === g.sol[h.i] && !first.has(h.i)) first.set(h.i, h.t);
+  for (const h of g.hist) if (h.d && h.d === g.sol[h.i] && !first.has(h.i)) first.set(h.i, h.t);
   const seq = [...first.entries()].filter(([i]) => !g.puzzle[i]).sort((a, b) => a[1] - b[1]);
   const gaps = []; let prev = 0;
   seq.forEach(([i, t], k) => { gaps.push({ gap: t - prev, start: prev, k, cell: i }); prev = t; });
   const sorted = gaps.map(x => x.gap).sort((a, b) => a - b), median = sorted.length ? sorted[sorted.length >> 1] : 0;
   const stalls = gaps.filter(x => x.gap >= 15000 && x.gap >= 2.5 * median).sort((a, b) => b.gap - a.gap).slice(0, 3);
-  const techCount = {};
+  const kinds = {};
   for (const s of stalls) {
+    // the correct digits placed so far
     const grid = g.puzzle.slice();
     for (let k = 0; k < s.k; k++) grid[seq[k][0]] = g.sol[seq[k][0]];
     s.grid = grid;
-    const st = E.makeState(grid);
-    const singles = new Set([...E.TECH.fullHouse.find(st, 99), ...E.TECH.hiddenSingleBox.find(st, 99), ...E.TECH.hiddenSingleLine.find(st, 99), ...E.TECH.nakedSingle.find(st, 99)].map(x => x.p[0]));
-    s.singles = singles.size;
+    // what the player's board actually looked like, and what they did during the pause
+    // replay the pause: count note edits, and time spent with a wrong digit on the board
+    const vals = g.puzzle.slice(), end = s.start + s.gap, isWrong = () => vals.some((v, i) => v && !g.puzzle[i] && v !== g.sol[i]);
+    let notes = 0, wrongMs = 0, tPrev = s.start, wrongNow = false, began = false;
+    for (const h of g.hist) {
+      if (h.t > end) break;
+      if (h.t > s.start) {
+        if (!began) { wrongNow = isWrong(); began = true; }
+        if (wrongNow) wrongMs += h.t - tPrev;
+        tPrev = h.t;
+        if (h.n) notes++;
+      }
+      if (h.d !== undefined) { vals[h.i] = h.d; if (h.t > s.start) wrongNow = isWrong(); }
+    }
+    if (!began) wrongNow = isWrong();
+    if (wrongNow) wrongMs += end - tPrev;
+    s.wrong = wrongMs >= 0.4 * s.gap;
+    s.notes = notes;
+    const st = E.makeState(grid), by = singlesByType(st);
+    s.singles = SINGLE_IDS.reduce((a, id) => a + by[id].length, 0);
+    s.easiest = SINGLE_IDS.find(id => by[id].length) || null;
     const chain = [];
     for (let k = 0; k < 40; k++) { const x = E.nextStep(st, 4); if (!x) break; chain.push(x); E.applyStep(st, x); if (x.p) break; }
     s.chain = chain;
-    s.target = chain.length && chain[chain.length - 1].p ? chain[chain.length - 1].p[0] : s.cell;
-    if (!s.singles && chain.length) { const hard = chain.reduce((a, x) => E.TECH[x.t].tier > E.TECH[a.t].tier ? x : a, chain[0]); s.tech = hard.t; techCount[hard.t] = (techCount[hard.t] || 0) + 1; }
+    s.target = s.easiest ? by[s.easiest][0].p[0] : chain.length && chain[chain.length - 1].p ? chain[chain.length - 1].p[0] : s.cell;
+    if (!s.singles && chain.length) s.tech = chain.reduce((a, x) => E.TECH[x.t].tier > E.TECH[a.t].tier ? x : a, chain[0]).t;
+    s.kind = s.wrong ? 'mistake'
+      : s.notes >= 8 ? 'notes'
+      : s.singles ? (s.easiest === 'fullHouse' || s.easiest === 'hiddenSingleBox' ? 'scan' : s.easiest)
+      : s.tech || 'trial';
+    kinds[s.kind] = (kinds[s.kind] || 0) + 1;
   }
-  let tip = null;
-  const scanStalls = stalls.filter(s => s.singles > 0).length;
-  const topTech = Object.keys(techCount).sort((a, b) => techCount[b] - techCount[a])[0];
-  if (topTech && DRILL_FOR_TECH[topTech]) tip = DRILL_FOR_TECH[topTech];
-  else if (scanStalls) tip = { easy: 'easy-hatch', medium: 'med-hatch', hard: 'med-hatch', expert: 'med-sprint', master: 'med-sprint', extreme: 'ext-blind' }[g.level];
-  return { stalls, median, tip, placements: seq.length };
+  const top = Object.keys(kinds).sort((a, b) => kinds[b] - kinds[a]).find(k => weakDrill(k));
+  return { stalls, median, tip: top ? weakDrill(top) : null, placements: seq.length };
 }
 
 function miniHTML(grid, target) {
@@ -1651,13 +1676,15 @@ function miniHTML(grid, target) {
 function winSheet(g, an, o) {
   const st = DB.stats[g.level + '|' + g.mode];
   const stallHTML = an.stalls.length ? an.stalls.map(s => {
-    const tm = fmt(s.start);
-    let msg;
-    if (s.singles) msg = `${s.singles === 1 ? 'A single was' : s.singles + ' singles were'} available. This was a scanning pause, not a logic problem.`;
-    else if (s.tech) msg = `Nothing easy was left: the way forward was a <b>${esc(E.TECH[s.tech].name)}</b>.`;
-    else msg = 'This spot needed trial and error.';
-    const drill = s.tech && DRILL_FOR_TECH[s.tech];
-    return `<div class="stall">${miniHTML(s.grid, s.target)}<div><p><span class="when">${fmt(s.gap)}</span> <span class="small">stuck from ${tm}</span></p><p style="margin-top:4px">${msg}</p>${drill ? `<button class="linkbtn" data-drill="${drill}">Train ${esc(E.TECH[s.tech].name)}</button>` : ''}</div></div>`;
+    const k = s.kind || (s.singles ? 'scan' : s.tech || 'trial');
+    const msg = k === 'mistake' ? 'A wrong digit was already on the board here, so nothing else could add up. Worth double-checking a digit before you commit it.'
+      : k === 'notes' ? `You were writing notes (${s.notes} edits). That\u2019s real work, not being stuck, but fast, accurate notes save minutes.`
+      : k === 'scan' ? `${s.singles === 1 ? 'An easy single was' : s.singles + ' singles were'} available, including a Full House or a single inside a box. Scanning was the hold-up.`
+      : k === 'hiddenSingleLine' ? 'The only easy move was a <b>Hidden Single in a row or column</b>. Those are harder to see than singles in a box.'
+      : k === 'nakedSingle' ? 'The only move was a <b>Naked Single</b>: a cell with one possible digit. You find those by counting a cell\u2019s row, column and box, not by scanning.'
+      : k === 'trial' ? 'This spot needed trial and error, beyond the techniques the app teaches.'
+      : `Nothing easier was left: the way forward was a <b>${esc(E.TECH[k].name)}</b>.`;
+    return `<div class="stall">${miniHTML(s.grid, s.target)}<div><p><span class="when">${fmt(s.gap)}</span> <span class="small">stuck from ${fmt(s.start)}</span></p><p style="margin-top:4px">${msg}</p>${focusButtons(k)}</div></div>`;
   }).join('') : `<p class="sub">No long pauses. Your pace stayed close to ${secs(an.median)} per digit all the way through.</p>`;
   const el = sheet(`
     <h2>${o.newBest ? 'New best time' : 'Solved'}</h2>
@@ -1672,7 +1699,11 @@ function winSheet(g, an, o) {
     ${stallHTML}
     ${g.drill ? `<button class="btn primary" id="ws-again">Run it again</button>` : `<button class="btn primary" id="ws-new">New game</button>`}
     <button class="btn line" id="ws-home">${g.drill ? 'Back to training' : 'Home'}</button>`, () => { G = null; });
-  el.onclick = e => { const b = e.target.closest('[data-drill]'); if (b) { const id = b.dataset.drill; closeSheet(); S.trainLevel = DRILL_BY_ID[id].lv; save(); go('train'); openDrillIntro(id); } };
+  el.onclick = e => {
+    const b = e.target.closest('[data-drill]'), l = e.target.closest('[data-lesson]');
+    if (b) { const id = b.dataset.drill; closeSheet(); S.trainLevel = DRILL_BY_ID[id].lv; save(); go('train'); openDrillIntro(id); }
+    if (l) { closeSheet(); startLesson(l.dataset.lesson); }
+  };
   if (g.drill) $('#ws-again', el).onclick = () => { closeSheet(); startDrill(g.drill); };
   else $('#ws-new', el).onclick = () => { closeSheet(); newGameSheet(); };
   $('#ws-home', el).onclick = () => { closeSheet(); go(g.drill ? 'train' : 'play'); };
@@ -1843,7 +1874,7 @@ async function loadNext(first) {
   clearTimeout(slow); loading(false);
   if (!me.alive || D !== me) return;
   if (!pos) { toast('Couldn\u2019t build a position. Try again.'); go('train'); return; }
-  me.pos = pos; me._lt = now(); me.sel = -1; me.placed = new Set(); me.phase = 'answer'; me.posStart = now(); me.show = null; me.toggles = 0; me.tries = 0;
+  me.pos = pos; me._lt = now(); me.hints = null; me.hintIdx = 0; me.sel = -1; me.placed = new Set(); me.phase = 'answer'; me.posStart = now(); me.show = null; me.toggles = 0; me.tries = 0;
   if (me.def.kind === 'hatch') me.targets = hatchTargets(pos.g, pos.d);
   hideDrillCoach();
   renderDrill();
@@ -1855,6 +1886,7 @@ async function loadNext(first) {
 function drillClock() {
   const el = $('#d-clock');
   if (!D || D.phase === 'load') return;
+  if (D.lesson) { el.textContent = ''; return; }
   if (D.def.kind === 'sprint') {
     if (D.phase === 'answer' && !document.hidden) { const t = now(); D.timeLeft -= t - (D._lt || t); D._lt = t; } else D._lt = now();
     el.textContent = Math.max(0, Math.ceil(D.timeLeft / 1000));
@@ -1866,47 +1898,50 @@ function prompt() {
   const def = D.def, p = D.pos;
   if (def.kind === 'find') {
     const names = def.techs.length > 2 ? 'the move' : def.techs.map(t => 'a ' + E.TECH[t].name).join(' or ');
-    return `<span style="flex:1">${def.notes ? `Find ${esc(names)}. Tap a cell, then the candidate it removes.` : `Find ${esc(names)}. Tap the cell, then its digit.`}</span><button class="linkbtn" id="d-show">Show me</button>`;
+    return `<span style="flex:1">${def.notes ? `Find ${esc(names)}. Tap a cell, then the candidate it removes.` : `Find ${esc(names)}. Tap the cell, then its digit.`}</span><button class="linkbtn" id="d-show">${D.lesson ? 'Hint' : 'Show me'}</button>`;
   }
-  if (def.kind === 'hatch') return `<span class="big">${p.d}</span><span style="flex:1">Tap every cell where ${p.d} goes right now. ${D.targets.size ? '' : ''}</span><button class="linkbtn" id="d-skip">Skip</button>`;
-  if (def.kind === 'cands') return `<span style="flex:1">Mark every digit the pulsing cell could still be, then check.</span>`;
+  if (def.kind === 'hatch') return `<span class="big">${p.d}</span><span style="flex:1">Tap every cell where ${p.d} goes right now.</span>${D.lesson ? '<button class="linkbtn" id="d-show">Hint</button>' : '<button class="linkbtn" id="d-skip">Skip</button>'}`;
+  if (def.kind === 'cands') return `<span style="flex:1">Mark every digit the pulsing cell could still be, then check.</span>${D.lesson ? '<button class="linkbtn" id="d-show">Hint</button>' : ''}`;
   if (def.kind === 'sprint') return `<span class="big" style="width:auto;padding:0 12px">${D.score}</span><span style="flex:1">Correct digits so far. Wrong ones cost 3 s.</span>`;
   return '';
 }
 
 function renderDrill() {
-  if (!D || !D.pos) return;
-  const def = D.def, p = D.pos, spec = blankSpec(), sel = D.sel, blind = !!def.blind;
-  const sv = sel >= 0 ? p.g[sel] : 0, show = D.show;
+  if (!D || (!D.pos && !D.view)) return;
+  const def = D.def, p = D.view || D.pos, spec = blankSpec(), sel = D.view ? -1 : D.sel, blind = !!def.blind;
+  const sv = sel >= 0 ? p.g[sel] : 0, show = D.view ? D.view.show : D.show, reading = !!D.view;
   for (let i = 0; i < 81; i++) {
     const s = spec[i], cls = [];
     s.v = p.g[i];
-    if (D.placed.has(i)) cls.push('user');
+    if (!reading && D.placed.has(i)) cls.push('user');
     if (!blind && sel >= 0) {
       if (i !== sel && E.PEERSET[sel].has(i)) cls.push('peer');
       if (sv && p.g[i] === sv && i !== sel) cls.push('same');
     }
-    if (def.kind === 'hatch' && !blind && p.g[i] === p.d) cls.push('same');
+    if (!reading && def.kind === 'hatch' && !blind && p.g[i] === p.d) cls.push('same');
     if (i === sel) cls.push('sel');
     if (p.notes && !p.g[i]) s.notes = p.notes[i];
-    if (def.kind === 'cands' && i === p.cell) {
+    if (!reading && def.kind === 'cands' && i === p.cell) {
       cls.push('target'); if (D.phase === 'answer') cls.push('pulse');
       if (D.phase === 'answer') s.notes = D.toggles;
       else { s.notes = D.toggles | p.truth; s.nok = D.toggles & p.truth; s.nx = D.toggles & ~p.truth; s.nkey = p.truth & ~D.toggles; }
     }
     if (show) {
-      if (show.cells.has(i)) cls.push(show.colA && show.colA.has(i) ? 'colA' : show.colB && show.colB.has(i) ? 'colB' : 'hcell');
-      else if (show.units.has(i)) cls.push('hunit');
+      if (show.cls[i]) cls.push(show.cls[i]);
+      if (show.notes && show.notes[i] !== undefined && !p.g[i]) s.notes = show.notes[i];
       if (show.key[i]) s.nkey = show.key[i];
       if (show.x[i]) s.nx = show.x[i];
+      if (show.ok[i]) s.nok = show.ok[i];
+      if (show.place && show.place[0] === i && !p.g[i]) { s.v = show.place[1]; s.notes = 0; cls.push('user', 'okbg'); }
     }
     s.cls = cls.join(' ');
   }
   dBoard.render(spec);
-  $('#d-prompt').innerHTML = D.phase === 'load' ? '' : prompt();
-  const sh = $('#d-show'); if (sh) sh.onclick = drillShowMe;
+  $('#d-prompt').innerHTML = D.phase === 'load' ? '' : D.phase === 'read' ? `<span class="small">Page ${D.page + 1} of ${D.pages.length}</span>` : prompt();
+  const sh = $('#d-show'); if (sh) sh.onclick = D.lesson ? lessonHint : drillShowMe;
   const sk = $('#d-skip'); if (sk) sk.onclick = () => { D.errors++; D.times.push(now() - D.posStart + 5000); D.k++; afterItem(); };
-  $('#d-prog').style.width = D.total ? Math.round(D.k / D.total * 100) + '%' : Math.max(0, 100 - D.timeLeft / (def.seconds * 10)) + '%';
+  $('#d-prog').style.width = D.lesson ? Math.round(((D.phase === 'read' ? D.page : D.pages.length) + D.k) / (D.pages.length + D.total) * 100) + '%'
+    : D.total ? Math.round(D.k / D.total * 100) + '%' : Math.max(0, 100 - D.timeLeft / (def.seconds * 10)) + '%';
   // pad & actions
   const pad = $('#d-pad'), act = $('#d-act');
   const showPad = D.phase === 'answer' && def.kind !== 'hatch';
@@ -1924,7 +1959,7 @@ function drillTap(i) {
     if (p.g[i]) return;
     if (D.targets.has(i)) {
       p.g[i] = p.d; D.placed.add(i); dBoard.pop(i);
-      D.targets = hatchTargets(p.g, p.d);
+      D.targets = hatchTargets(p.g, p.d); D.hints = null; D.hintIdx = 0; D.show = null; if (D.lesson) hideDrillCoach();
       if (!D.targets.size) { D.times.push(now() - D.posStart); D.k++; D.phase = 'between'; renderDrill(); toast(`Round ${D.k}: ${secs(D.times[D.times.length - 1])}`, 1000); setTimeout(afterItem, 650); return; }
     } else {
       D.errors++; dBoard.flash(i);
@@ -1976,12 +2011,14 @@ function drillDigit(d) {
 }
 
 function stepShow(st) {
-  const units = new Set((st.hl.units || []).flatMap(u => E.UNITS[u]));
-  const key = {}, x = {};
-  const dig = st.hl.digit ? E.BIT(st.hl.digit) : st.digits ? st.digits.reduce((a, d) => a | E.BIT(d), 0) : 0;
-  for (const c of st.hl.cells) key[c] = dig || 0;
-  if (st.e) for (const [c, d] of st.e) x[c] = (x[c] || 0) | E.BIT(d);
-  return { cells: new Set(st.hl.cells), units, key, x, colA: st.hl.colorA ? new Set(st.hl.colorA) : null, colB: st.hl.colorB ? new Set(st.hl.colorB) : null };
+  const sh = SH(), units = (st.hl.units || []).flatMap(u => E.UNITS[u]);
+  addCls(sh, units, 'hunit');
+  const A = st.hl.colorA ? new Set(st.hl.colorA) : null, Bc = st.hl.colorB ? new Set(st.hl.colorB) : null;
+  for (const c of st.hl.cells) sh.cls[c] = A && A.has(c) ? 'colA' : Bc && Bc.has(c) ? 'colB' : 'hcell';
+  const dig = st.hl.digit ? E.BIT(st.hl.digit) : st.digits ? st.digits.reduce((m, d) => m | E.BIT(d), 0) : 0;
+  if (dig) addKey(sh, st.hl.cells, dig);
+  if (st.e) addX(sh, st.e);
+  return sh;
 }
 
 function findCorrect(step, revealed) {
@@ -1996,7 +2033,7 @@ function findCorrect(step, revealed) {
   const last = D.k >= D.total;
   const el = $('#d-coach');
   el.className = 'coach show ' + (revealed ? '' : 'good');
-  el.innerHTML = `<h4>${revealed ? '<span class="dot"></span>' : ''}${esc(E.TECH[step.t].name)}${revealed ? '' : `, ${secs(t)}`}</h4><p>${esc(E.describe(step))}</p>
+  el.innerHTML = `<h4>${revealed ? '<span class="dot"></span>' : ''}${esc(E.TECH[step.t].name)}${revealed || D.lesson ? '' : `, ${secs(t)}`}</h4><p>${D.lesson && !revealed ? 'Well spotted. ' : ''}${esc(E.describe(step))}</p>
     <div class="actions"><button class="btn primary" id="dc-next">${last ? 'See results' : 'Next position'}</button></div>`;
   $('#dc-next').onclick = afterItem;
 }
@@ -2015,7 +2052,7 @@ function candsCheck() {
   const miss = E.digitsOf(p.truth & ~D.toggles), extra = E.digitsOf(D.toggles & ~p.truth);
   const el = $('#d-coach');
   el.className = 'coach show ' + (ok ? 'good' : 'bad');
-  el.innerHTML = `<h4>${ok ? 'Exactly right' : 'Not quite'}, ${secs(t)}</h4><p>${ok ? `${E.cellName(p.cell)} can be ${E.digitsOf(p.truth).join(', ')}.`
+  el.innerHTML = `<h4>${ok ? 'Exactly right' : 'Not quite'}${D.lesson ? '' : ', ' + secs(t)}</h4><p>${ok ? `${E.cellName(p.cell)} can be ${E.digitsOf(p.truth).join(', ')}.`
     : `${E.cellName(p.cell)} can be ${E.digitsOf(p.truth).join(', ')}.${miss.length ? ` You missed ${miss.join(', ')}.` : ''}${extra.length ? ` ${extra.join(', ')} ${extra.length > 1 ? 'are' : 'is'} already used in its row, column or box.` : ''}`}</p>
     <div class="actions"><button class="btn primary" id="dc-next">${D.k >= D.total ? 'See results' : 'Next cell'}</button></div>`;
   $('#dc-next').onclick = afterItem;
@@ -2029,6 +2066,7 @@ function afterItem() {
 }
 
 function finishDrill() {
+  if (D.lesson) return completeLesson();
   const d = D.def; D.alive = false;
   let stars, score, better, lines;
   if (d.kind === 'sprint') {
@@ -2056,6 +2094,528 @@ function finishDrill() {
   $('#dr-back', el).onclick = () => closeSheet();
 }
 
+
+/* =====================================================================
+   LESSONS — learn every technique inside the app
+   theory pages → a live walkthrough on a generated grid → guided practice
+   ===================================================================== */
+const cn = E.cellName, un = E.unitName, BIT = E.BIT;
+const kindOf = u => u < 9 ? 'row' : u < 18 ? 'column' : 'box';
+const listOf = a => a.length <= 1 ? a.join('') : a.slice(0, -1).join(', ') + ' and ' + a[a.length - 1];
+const WORD = { 1: 'one', 2: 'two', 3: 'three', 4: 'four' }, word = n => WORD[n] || String(n);
+const maskOf = ds => ds.reduce((m, d) => m | BIT(d), 0);
+function elimText(e) {
+  const by = {};
+  for (const [i, d] of e) (by[d] = by[d] || []).push(cn(i));
+  return listOf(Object.keys(by).map(d => `${d} from ${listOf(by[d])}`));
+}
+function SH() { return { cls: {}, key: {}, x: {}, ok: {}, place: null, notes: null }; }
+function addCls(sh, cells, c) { for (const i of cells) sh.cls[i] = sh.cls[i] ? sh.cls[i] + ' ' + c : c; }
+function addKey(sh, cells, m) { for (const i of cells) sh.key[i] = (sh.key[i] || 0) | m; }
+function addX(sh, e) { for (const [i, d] of e) sh.x[i] = (sh.x[i] || 0) | BIT(d); }
+function cloneSh(sh) { return { cls: Object.assign({}, sh.cls), key: Object.assign({}, sh.key), x: Object.assign({}, sh.x), ok: Object.assign({}, sh.ok), place: sh.place, notes: sh.notes }; }
+
+/* ---------- a step-by-step walkthrough of one concrete move ---------- */
+function walkthrough(step, st) {
+  const F = [], push = (p, sh) => F.push({ p: p.charAt(0).toUpperCase() + p.slice(1), show: cloneSh(sh) });
+  const e = step.e || [], eCells = [...new Set(e.map(x => x[0]))];
+  switch (step.t) {
+    case 'fullHouse': {
+      const [i, d] = step.p, U = E.UNITS[step.u];
+      const have = U.filter(c => st.g[c]).map(c => st.g[c]).sort((a, b) => a - b);
+      const s = SH(); addCls(s, U, 'hunit'); addCls(s, [i], 'target');
+      push(`Look at ${un(step.u)}. Eight of its nine cells are already filled.`, s);
+      push(`It already has ${listOf(have)}. A ${kindOf(step.u)} holds every digit once, so the missing one is ${d}.`, s);
+      s.place = [i, d]; push(`${cn(i)} must be ${d}.`, s);
+      break;
+    }
+    case 'hiddenSingleBox':
+    case 'hiddenSingleLine': {
+      const [i, d] = step.p, u = step.u, U = E.UNITS[u];
+      const empt = U.filter(c => !st.g[c] && c !== i);
+      const allD = []; for (let c = 0; c < 81; c++) if (st.g[c] === d) allD.push(c);
+      const left = new Set(empt.filter(c => allD.some(b => E.sees(b, c))));
+      const byElim = empt.filter(c => !left.has(c));
+      const blocked = [...left], blockers = [], rays = new Set();
+      while (left.size) {
+        let best = -1, bn = 0;
+        for (const b of allD) { let n = 0; for (const c of left) if (E.sees(b, c)) n++; if (n > bn) { bn = n; best = b; } }
+        if (best < 0) break;
+        blockers.push(best);
+        for (const c of [...left]) if (E.sees(best, c)) {
+          left.delete(c);
+          const via = E.ROW[best] === E.ROW[c] ? E.ROW[best] : E.COL[best] === E.COL[c] ? 9 + E.COL[best] : 18 + E.BOX[best];
+          for (const r of E.UNITS[via]) rays.add(r);
+        }
+      }
+      const s = SH(); addCls(s, U, 'hunit');
+      push(`Where can ${d} go in ${un(u)}? Every ${kindOf(u)} needs a ${d}, and this one has ${empt.length + 1} empty cells.`, s);
+      const s2 = SH(); addCls(s2, [...rays].filter(c => !U.includes(c)), 'ray'); addCls(s2, U, 'hunit'); addCls(s2, blocked, 'xcell'); addCls(s2, blockers, 'hcell');
+      push(`Each ${d} already on the grid rules out its whole row, column and box. ${blockers.length === 1 ? `The ${d} in ${cn(blockers[0])} rules out` : `The ${d}s in ${listOf(blockers.map(cn))} rule out`} ${blocked.length === 1 ? 'one of the empty cells' : `${blocked.length} of the empty cells`} (shaded red).${byElim.length ? ` ${listOf(byElim.map(cn))} ${byElim.length === 1 ? 'was' : 'were'} ruled out earlier by other techniques.` : ''}`, s2);
+      addCls(s2, [i], 'target'); s2.place = [i, d];
+      push(`Only ${cn(i)} is left in ${un(u)}, so ${d} goes there.`, s2);
+      break;
+    }
+    case 'nakedSingle': {
+      const [i, d] = step.p, P = E.PEERS[i], seen = {};
+      for (const c of P) if (st.g[c] && !seen[st.g[c]]) seen[st.g[c]] = c;
+      const ds = Object.keys(seen).map(Number).sort((a, b) => a - b);
+      const s = SH(); addCls(s, P, 'hunit'); addCls(s, [i], 'target');
+      push(`Look at ${cn(i)}. It sees 20 cells: the rest of its row, its column and its box (shaded).`, s);
+      addCls(s, Object.values(seen), 'hcell');
+      push(`Between them those cells already hold ${listOf(ds)}. A cell can\u2019t be a digit that any cell it sees already has.`, s);
+      s.place = [i, d]; push(`That leaves only ${d}, so ${cn(i)} is ${d}.`, s);
+      break;
+    }
+    case 'pointing':
+    case 'claiming': {
+      const d = step.d, cells = step.hl.cells;
+      const A = step.t === 'pointing' ? step.u : step.u, Bu = step.t === 'pointing' ? step.line : step.box;
+      const s = SH(); addCls(s, E.UNITS[A], 'hunit'); addCls(s, cells, 'hcell'); addKey(s, cells, BIT(d));
+      push(`Look at digit ${d} in ${un(A)}. The notes show it can only go in ${listOf(cells.map(cn))}.`, s);
+      addCls(s, E.UNITS[Bu].filter(c => !E.UNITS[A].includes(c)), 'ray');
+      push(step.t === 'pointing'
+        ? `All of them are in ${un(Bu)}. So wherever it ends up, ${un(A)}\u2019s ${d} sits in ${un(Bu)}.`
+        : `All of them are inside ${un(Bu)}. So ${un(A)}\u2019s ${d} is somewhere in ${un(Bu)}.`, s);
+      addX(s, e);
+      push(step.t === 'pointing'
+        ? `${un(Bu)} can only hold one ${d}, and ${un(A)} is using it. Remove ${d} from the rest of ${un(Bu)}: ${listOf(eCells.map(cn))}.`
+        : `${un(Bu)} can only hold one ${d}, and ${un(A)} is using it. Remove ${d} from the box\u2019s other cells: ${listOf(eCells.map(cn))}.`, s);
+      break;
+    }
+    case 'nakedPair':
+    case 'nakedTriple': {
+      const n = step.cells.length, m = maskOf(step.digits);
+      const s = SH(); addCls(s, E.UNITS[step.u], 'hunit'); addCls(s, step.cells, 'hcell'); addKey(s, step.cells, m);
+      push(n === 2 ? `Look at ${listOf(step.cells.map(cn))} in ${un(step.u)}. Both can only be ${step.digits.join(' or ')}.`
+        : `Look at ${listOf(step.cells.map(cn))} in ${un(step.u)}. Between them, their candidates are only ${listOf(step.digits)}.`, s);
+      push(`${word(n)} cells and ${word(n)} digits: those cells will use up ${listOf(step.digits)} between them, in some order. So no other cell in ${un(step.u)} can be any of those digits.`, s);
+      addX(s, e); push(`Remove them: ${elimText(e)}.`, s);
+      break;
+    }
+    case 'hiddenPair':
+    case 'hiddenTriple': {
+      const n = step.cells.length, m = maskOf(step.digits);
+      const s = SH(); addCls(s, E.UNITS[step.u], 'hunit'); addCls(s, step.cells, 'hcell'); addKey(s, step.cells, m);
+      push(`In ${un(step.u)}, where can ${listOf(step.digits)} go? Check the notes: only in ${listOf(step.cells.map(cn))}.`, s);
+      push(`${word(n)} digits need ${word(n)} cells, and only these ${word(n)} cells can take them. So these cells must be ${listOf(step.digits)} and nothing else.`, s);
+      addX(s, e); push(`Remove their other candidates: ${elimText(e)}.`, s);
+      break;
+    }
+    case 'xWing':
+    case 'swordfish': {
+      const d = step.d, n = step.base.length, bk = step.byRow ? 'row' : 'column', ck = step.byRow ? 'column' : 'row';
+      const baseU = step.base.map(a => step.byRow ? a : 9 + a), coverU = step.cover.map(k => step.byRow ? 9 + k : k);
+      const baseN = step.base.map(a => `${bk} ${a + 1}`), coverN = step.cover.map(k => `${ck} ${k + 1}`);
+      const baseL = `${bk}s ${listOf(step.base.map(a => a + 1))}`, coverL = `${ck}s ${listOf(step.cover.map(k => k + 1))}`;
+      const s = SH(); for (const u of baseU) addCls(s, E.UNITS[u], 'hunit'); addCls(s, step.hl.cells, 'hcell'); addKey(s, step.hl.cells, BIT(d));
+      push(`Follow digit ${d}. In ${baseL}, the notes show only ${n === 2 ? 'two' : 'two or three'} cells where ${d} can go.`, s);
+      for (const u of coverU) addCls(s, E.UNITS[u].filter(c => !baseU.some(b => E.UNITS[b].includes(c))), 'ray');
+      push(`All of those cells sit in just ${word(n)} ${ck}s: ${coverL}.`, s);
+      push(n === 2
+        ? `Each of the two ${bk}s needs a ${d}. They can\u2019t both use the same ${ck}, since a ${ck} holds one ${d}. So the ${d}s sit on opposite corners of this rectangle, and either way each ${ck} gets its ${d} from these ${bk}s.`
+        : `Each of the three ${bk}s needs a ${d}, and they can only use these three ${ck}s, a different one each. So all three ${ck}s get their ${d} from these ${bk}s.`, s);
+      addX(s, e); push(`No other cell in ${coverL} can be ${d}: remove ${d} from ${listOf(eCells.map(cn))}.`, s);
+      break;
+    }
+    case 'xyWing': {
+      const P = step.pivot, [W1, W2] = step.wings, z = step.z, cp = st.c[P];
+      const a = E.LOW[cp & st.c[W1]], b = E.LOW[cp & st.c[W2]];
+      const s = SH(); addCls(s, [P], 'hcell'); addKey(s, [P], cp);
+      push(`The pivot, ${cn(P)}, has just two candidates: ${a} and ${b}.`, s);
+      addCls(s, [W1, W2], 'hcell'); addKey(s, [W1, W2], st.c[W1] | st.c[W2]);
+      push(`It sees ${cn(W1)}, which is ${a} or ${z}, and ${cn(W2)}, which is ${b} or ${z}. These are the wings.`, s);
+      push(`If the pivot is ${a}, ${cn(W1)} can\u2019t be ${a}, so it\u2019s ${z}. If the pivot is ${b}, ${cn(W2)} is ${z}. Either way, one of the wings is ${z}.`, s);
+      addCls(s, eCells, 'hunit'); addX(s, e);
+      push(`So a cell that sees both wings can\u2019t be ${z}: remove ${z} from ${listOf(eCells.map(cn))}.`, s);
+      break;
+    }
+    case 'xyzWing': {
+      const P = step.pivot, [W1, W2] = step.wings, z = step.z, zb = BIT(z);
+      const x = E.LOW[st.c[W1] & ~zb], y = E.LOW[st.c[W2] & ~zb];
+      const s = SH(); addCls(s, [P], 'hcell'); addKey(s, [P], st.c[P]);
+      push(`The pivot, ${cn(P)}, has three candidates: ${x}, ${y} and ${z}.`, s);
+      addCls(s, [W1, W2], 'hcell'); addKey(s, [W1, W2], st.c[W1] | st.c[W2]);
+      push(`It sees ${cn(W1)} (${x} or ${z}) and ${cn(W2)} (${y} or ${z}). All three cells have ${z}.`, s);
+      push(`If the pivot is ${x}, ${cn(W1)} must be ${z}. If it\u2019s ${y}, ${cn(W2)} is ${z}. If it\u2019s ${z}, the pivot itself is ${z}. One of the three is always ${z}.`, s);
+      addCls(s, eCells, 'hunit'); addX(s, e);
+      push(`A cell that sees all three can\u2019t be ${z}: remove ${z} from ${listOf(eCells.map(cn))}.`, s);
+      break;
+    }
+    case 'coloring': {
+      const d = step.d, A = step.A, Bc = step.B, comp = A.concat(Bc);
+      const s = SH(); addCls(s, comp, 'hcell'); addKey(s, comp, BIT(d));
+      push(`Follow digit ${d}. When a row, column or box has only two cells where ${d} can go, exactly one of them is ${d}. That\u2019s a strong link. These cells are joined by a chain of strong links.`, s);
+      const s2 = SH(); addCls(s2, A, 'colA'); addCls(s2, Bc, 'colB'); addKey(s2, comp, BIT(d));
+      push(`Colour them alternately green and red along the links. Each link has exactly one ${d}, so either every green cell is ${d}, or every red one is.`, s2);
+      if (step.rule === 'wrap') {
+        const bad = A.includes(e[0][0]) ? 'green' : 'red';
+        addX(s2, e); push(`Two ${bad} cells see each other, and they can\u2019t both be ${d}. So ${bad} is the false colour: remove ${d} from every ${bad} cell.`, s2);
+      } else {
+        addCls(s2, eCells, 'hunit'); addX(s2, e);
+        push(`${listOf(eCells.map(cn))} ${eCells.length === 1 ? 'sees' : 'each see'} a green cell and a red cell. One of the colours is true, so one of those cells is ${d}: remove ${d} from ${listOf(eCells.map(cn))}.`, s2);
+      }
+      break;
+    }
+    case 'xyChain': {
+      const ch = step.chain, x = step.x, ts = [];
+      let prev = x;
+      for (const c of ch) { const t = E.LOW[st.c[c] & ~BIT(prev)]; ts.push(t); prev = t; }
+      const s = SH(); addCls(s, ch, 'hcell'); for (const c of ch) addKey(s, [c], st.c[c]);
+      push(`These cells each have exactly two candidates, and each one sees the next: ${listOf(ch.map(cn))}.`, s);
+      const parts = ch.slice(1).map((c, k) => `${cn(c)} must be ${ts[k + 1]}`);
+      push(`Suppose ${cn(ch[0])} isn\u2019t ${x}. Then it\u2019s ${ts[0]}, so ${parts.length > 4 ? parts.slice(0, 2).join(', so ') + ', and so on down the chain, until ' + parts[parts.length - 1] : parts.join(', so ')}.`, s);
+      addCls(s, eCells, 'hunit'); addX(s, e);
+      push(`So if the first cell isn\u2019t ${x}, the last one is. One of the two ends is always ${x}. A cell that sees both ends can\u2019t be ${x}: remove ${x} from ${listOf(eCells.map(cn))}.`, s);
+      break;
+    }
+  }
+  return F;
+}
+
+/* ---------- lesson content ---------- */
+const RECAP = 'This technique works on notes: the small numbers in each cell showing its candidates, the digits it could still be. Techniques like this one remove candidates; when a cell is down to one, you place it. If notes are new to you, do the Candidates lesson first.';
+const LESSONS = {
+  rules: { title: 'How sudoku works', blurb: 'The rules, and the words this app uses.', setup: 'rules', next: 'fullHouse' },
+  fullHouse: { title: 'Full House', tech: 'fullHouse', next: 'hiddenSingleBox', pages: [
+    ['The idea', 'Every row, column and box holds each digit from 1 to 9 exactly once. So when a row, column or box has eight digits filled in, its empty cell must be the one digit that\u2019s missing. That\u2019s a Full House.'],
+    ['How to spot it', 'Look for a row, column or box with a single gap. They turn up more and more as the grid fills, especially right after you place a digit: check that digit\u2019s row, column and box straight away.'],
+  ] },
+  hiddenSingleBox: { title: 'Hidden Single in a box', tech: 'hiddenSingleBox', next: 'hatch', pages: [
+    ['The idea', 'Pick a digit, say 7, and a box that doesn\u2019t have a 7 yet. The box needs one. Every 7 already on the grid rules out its own row, column and box: no other cell there can be a 7. If all of the box\u2019s empty cells but one are ruled out, the 7 must go in that last cell.'],
+    ['Why \u201chidden\u201d', 'That cell might look like it could be several digits. What makes it certain is the box: it\u2019s the only place the 7 can go. Speed solvers call this cross-hatching: imagine lines running out from each 7 and see which cell of the box is left uncovered.'],
+  ] },
+  hatch: { title: 'Scanning one digit at a time', tech: 'hiddenSingleBox', practice: 'hatch', pages: [
+    ['Think in digits, not cells', 'Fast solvers rarely stare at one cell. They pick a digit and check every box that\u2019s missing it for a Hidden Single, then move on to the next digit.'],
+    ['How to scan a box', 'For a box that\u2019s missing the digit, look at the copies of it in the boxes beside it (they share rows) and above and below it (they share columns). Each copy rules out one row or column of the box. If only one empty cell survives, place the digit there.'],
+    ['Sweep again', 'Placing a digit can unlock another box for the same digit, so sweep that digit once more before moving on.'],
+  ] },
+  speed: { title: 'A routine for speed', blurb: 'How fast solvers move through the singles.', setup: 'plain', pages: [
+    ['Start with common digits', 'Begin with the digit that\u2019s already on the grid most often: it has the fewest gaps left, so its singles are quickest to find. Scan its boxes, then move to the next most common digit.'],
+    ['Look around every digit you place', 'A new digit fills a gap in its row, column and box. Glance at all three straight away for a Full House, or a box that\u2019s now down to one spot for some digit.'],
+    ['When box scans dry up', 'Check rows and columns that are nearly full for Hidden Singles, then count crowded cells for Naked Singles. Only start writing notes when singles have truly run out: on Easy and Medium grids, notes mostly cost time.'],
+    ['Don\u2019t guess', 'In paper mode a wrong digit quietly breaks everything after it. If you\u2019re not certain, keep looking. Every puzzle here can be solved by logic alone.'],
+  ] },
+  hiddenSingleLine: { title: 'Hidden Single in a row or column', tech: 'hiddenSingleLine', next: 'nakedSingle', pages: [
+    ['The idea', 'The same as a Hidden Single in a box, but for a row or column. Pick a digit and a row that\u2019s missing it. Each copy of that digit elsewhere rules out its own column and box. If only one cell of the row is left, the digit goes there.'],
+    ['Why they\u2019re harder', 'The copies that do the ruling out are spread along the whole line instead of sitting in neighbouring boxes. Check rows and columns that already have many digits: fewer gaps means fewer cells to rule out.'],
+  ] },
+  nakedSingle: { title: 'Naked Single', tech: 'nakedSingle', next: 'candidates', pages: [
+    ['The idea', 'A cell \u201csees\u201d the 20 other cells in its row, column and box, and it can\u2019t repeat any digit they hold. If those cells already hold eight different digits, only one digit is left for the cell. That\u2019s a Naked Single.'],
+    ['How to find them', 'You find these by counting rather than scanning. Pick a cell in a crowded area and run through its row, column and box, keeping track of which digits are missing. There are no notes in this lesson, so count in your head.'],
+  ] },
+  candidates: { title: 'Candidates and notes', blurb: 'The tool every harder technique is built on.', setup: 'cands', practice: 'cands', next: 'pointing' },
+  pointing: { title: 'Pointing', tech: 'pointing', next: 'claiming', pages: [
+    ['Before you start', RECAP],
+    ['The idea', 'A box needs each digit once. Suppose that inside a box, every candidate for 4 lies in the same row. Then the box\u2019s 4 is in that row, whichever cell it turns out to be. The row can\u2019t have a second 4, so 4 can be removed from the rest of that row, outside the box. It works the same way with a column.'],
+  ] },
+  claiming: { title: 'Claiming', tech: 'claiming', next: 'nakedPair', pages: [
+    ['Before you start', RECAP],
+    ['The idea', 'The reverse of Pointing. Suppose that in a row, every candidate for 6 lies inside one box. The row\u2019s 6 must be in that box, so that box\u2019s 6 is used up by the row. Remove 6 from the box\u2019s other cells. It works the same way with a column.'],
+  ] },
+  nakedPair: { title: 'Naked Pair', tech: 'nakedPair', next: 'hiddenPair', pages: [
+    ['Before you start', RECAP + ' A \u201cunit\u201d just means a row, column or box.'],
+    ['The idea', 'If two cells in the same unit both have exactly the same two candidates, say 3 and 8, then one is 3 and the other is 8. Those two digits are used up in that unit, so no other cell in it can be 3 or 8.'],
+  ] },
+  hiddenPair: { title: 'Hidden Pair', tech: 'hiddenPair', next: 'nakedTriple', pages: [
+    ['Before you start', RECAP + ' A \u201cunit\u201d means a row, column or box.'],
+    ['The idea', 'If two digits can only go in the same two cells of a unit, those cells must hold those two digits, in some order. So the cells can\u2019t be anything else: remove all their other candidates. It\u2019s \u201chidden\u201d because those extra candidates disguise the pair.'],
+  ] },
+  nakedTriple: { title: 'Naked Triple', tech: 'nakedTriple', next: 'hiddenTriple', pages: [
+    ['Before you start', RECAP + ' A \u201cunit\u201d means a row, column or box.'],
+    ['The idea', 'Three cells in a unit whose candidates, taken together, are only three digits. A cell doesn\u2019t need all three: {3,7}, {7,9} and {3,9} is a naked triple. Three cells, three digits: they use all three up, so remove those digits from the rest of the unit. It\u2019s the Naked Pair idea with one more cell.'],
+  ] },
+  hiddenTriple: { title: 'Hidden Triple', tech: 'hiddenTriple', next: 'xWing', pages: [
+    ['Before you start', RECAP + ' A \u201cunit\u201d means a row, column or box.'],
+    ['The idea', 'Three digits that, within a unit, can only go in the same three cells. Those cells must take those three digits, so every other candidate in them can be removed. It\u2019s the Hidden Pair idea with one more digit.'],
+  ] },
+  xWing: { title: 'X-Wing', tech: 'xWing', next: 'xyWing', pages: [
+    ['Before you start', RECAP],
+    ['The pattern', 'Pick a digit. Find two rows where it has exactly two candidate cells, with those cells in the same two columns. The four cells form the corners of a rectangle.'],
+    ['Why it works', 'Each row needs the digit once, and both rows can\u2019t use the same column, because a column holds it only once. So the digit sits on two opposite corners. Either way, each of the two columns gets its copy from these rows, so no other cell in those columns can have it. It also works with rows and columns swapped.'],
+  ] },
+  swordfish: { title: 'Swordfish', tech: 'swordfish', next: 'xyzWing', pages: [
+    ['Before you start', RECAP + ' Learn the X-Wing first: this is the same idea on three lines.'],
+    ['The pattern', 'Pick a digit. Find three rows where it has only two or three candidate cells, and all of those cells fall within the same three columns.'],
+    ['Why it works', 'The three rows need three copies of the digit, each in a different column, and they can only use these three columns. So all three columns get their copy from these rows. Remove the digit from every other cell of those columns. It also works with rows and columns swapped.'],
+  ] },
+  xyWing: { title: 'XY-Wing', tech: 'xyWing', next: 'swordfish', pages: [
+    ['Before you start', RECAP + ' Two cells \u201csee\u201d each other if they share a row, column or box.'],
+    ['The pattern', 'Three cells, each with exactly two candidates. The pivot has X and Y. It sees one wing with X and Z, and another wing with Y and Z. The wings share Z.'],
+    ['Why it works', 'If the pivot is X, the first wing can\u2019t be X, so it\u2019s Z. If the pivot is Y, the second wing is Z. One wing is always Z, so any cell that sees both wings can\u2019t be Z.'],
+  ] },
+  xyzWing: { title: 'XYZ-Wing', tech: 'xyzWing', next: 'coloring', pages: [
+    ['Before you start', RECAP + ' Learn the XY-Wing first: this is a close relative.'],
+    ['The pattern', 'Like an XY-Wing, but the pivot has three candidates, X, Y and Z, while the wings have X and Z, and Y and Z.'],
+    ['Why it works', 'Now the pivot itself might be Z. But if it\u2019s X, the first wing is Z; if it\u2019s Y, the second wing is Z. So Z is always in one of the three cells. Only a cell that sees all three can lose Z.'],
+  ] },
+  coloring: { title: 'Simple Colouring', tech: 'coloring', next: 'xyChain', pages: [
+    ['Before you start', RECAP],
+    ['Strong links', 'Look at one digit. When a row, column or box has exactly two cells where it can go, exactly one of them is that digit. That pair is a strong link.'],
+    ['Colouring', 'Strong links can join up into a chain. Colour the cells alternately along it. One colour is all true and the other all false. Rule 1: if two cells of the same colour see each other, that colour is false. Rule 2: a cell outside the chain that sees both colours can\u2019t be the digit.'],
+  ] },
+  xyChain: { title: 'XY-Chain', tech: 'xyChain', pages: [
+    ['Before you start', RECAP + ' Learn the XY-Wing first: an XY-Wing is the shortest XY-Chain.'],
+    ['The pattern', 'A chain of cells, each with exactly two candidates, where each cell sees the next and shares a digit with it.'],
+    ['Why it works', 'If the first cell isn\u2019t X, it\u2019s its other digit. That forces the next cell to be its other digit, and so on down the chain. When the chain is built so that the last cell is then forced to be X, one of the two ends is always X. Any cell that sees both ends can\u2019t be X.'],
+  ] },
+};
+const TECH_SRC = { fullHouse: 'easy', hiddenSingleBox: 'easy', hiddenSingleLine: 'medium', nakedSingle: 'medium' };
+const srcFor = t => TECH_SRC[t] || ['easy', 'hard', 'expert', 'master', 'extreme'][E.TECH[t].tier];
+const lessonDone = id => !!(DB.lessons && DB.lessons[id]);
+function lessonsForDrill(d) {
+  if (d.lesson) return [d.lesson];
+  if (d.kind === 'find') return d.techs.filter(t => LESSONS[t]);
+  return { hatch: ['hatch'], cands: ['candidates'], sprint: ['speed'] }[d.kind] || [];
+}
+function drillForLesson(id) {
+  for (const lv of LEVEL_IDS) for (const d of DRILLS[lv]) { const ls = lessonsForDrill(d); if (ls.length === 1 && ls[0] === id) return d.id; }
+  return null;
+}
+
+/* ---------- lesson pages for the intro lessons ---------- */
+function rulesPages(ctx) {
+  const g = ctx.pos.g, sol = ctx.pos.sol, pages = [];
+  const boxes = SH(); for (const b of [0, 2, 4, 6, 8]) addCls(boxes, E.UNITS[18 + b], 'ray');
+  pages.push(['The grid', 'A sudoku grid has 81 cells, arranged in 9 rows, 9 columns and 9 boxes. The boxes are the 3\u00d73 squares with thick borders.', { g, show: boxes }]);
+  const r = SH(); addCls(r, E.UNITS[3], 'hunit');
+  pages.push(['Rows', 'A row runs across the grid. This is row 4.', { g, show: r }]);
+  const c = SH(); addCls(c, E.UNITS[9 + 6], 'hunit');
+  pages.push(['Columns', 'A column runs down the grid. This is column 7.', { g, show: c }]);
+  const b = SH(); addCls(b, E.UNITS[18 + 4], 'hunit');
+  pages.push(['Boxes', 'Boxes are numbered 1 to 9, left to right and then top to bottom. This is box 5, the centre.', { g, show: b }]);
+  const rule = SH(); addCls(rule, E.UNITS[3], 'hunit');
+  pages.push(['The one rule', 'In a solved grid, every row, every column and every box contains each digit from 1 to 9 exactly once. Here\u2019s a finished grid: look at row 4, or any row, column or box. That\u2019s the only rule.', { g: sol, show: rule }]);
+  pages.push(['The puzzle', 'A puzzle starts with some digits filled in, called the givens. Your job is to fill in the rest so the rule holds. Every puzzle in this app has exactly one solution, and you can always reach it by logic, with no guessing.', { g, show: SH() }]);
+  const i = 40, s = SH(); addCls(s, E.PEERS[i], 'hunit'); addCls(s, [i], 'target');
+  pages.push(['Cells that \u201csee\u201d each other', 'Two cells \u201csee\u201d each other when they share a row, column or box. Every cell sees 20 others (shaded). Cells that see each other can never hold the same digit, and every technique you\u2019ll learn grows from that.', { g, show: s }]);
+  const nm = SH(); addCls(nm, [22], 'target'); addCls(nm, E.UNITS[2], 'ray'); addCls(nm, E.UNITS[9 + 4], 'ray');
+  pages.push(['Naming cells', 'Explanations name cells by row and column. R3C5 means row 3, column 5, counting from the top left. It\u2019s outlined here.', { g, show: nm }]);
+  pages.push(['Playing in this app', 'Tap a cell, then tap a digit on the keypad. Turn on Notes to write small pencil marks instead of answers. Erase clears a cell, Undo steps back. In paper mode nothing tells you if a digit is right until the grid is full, just like on paper. Next up: your first technique, the Full House.', { g, show: SH() }]);
+  return pages;
+}
+function candPages(ctx) {
+  const p = ctx.pos, i = p.cell, g = p.g, pages = [];
+  const seen = {}; for (const c of E.PEERS[i]) if (g[c] && !seen[g[c]]) seen[g[c]] = c;
+  const s1 = SH(); addCls(s1, E.PEERS[i], 'hunit'); addCls(s1, [i], 'target');
+  pages.push(['What a candidate is', `A candidate is a digit a cell could still be. Take ${cn(i)} (outlined). It sees every cell in its row, column and box (shaded), and it can\u2019t be any digit those cells already hold.`, { g, show: s1 }]);
+  const s2 = cloneSh(s1); addCls(s2, Object.values(seen), 'hcell');
+  const used = Object.keys(seen).map(Number).sort((a, b) => a - b);
+  pages.push(['Crossing off', `Those cells already hold ${listOf(used)}. Cross them off and what\u2019s left are the candidates.`, { g, show: s2 }]);
+  const s3 = cloneSh(s2); s3.notes = { [i]: p.truth }; addKey(s3, [i], p.truth);
+  pages.push(['The result', `So ${cn(i)}\u2019s candidates are ${listOf(E.digitsOf(p.truth))}. Written as small numbers in the cell, they\u2019re called notes or pencil marks.`, { g, show: s3 }]);
+  const all = {}, st = E.makeState(g); for (let k = 0; k < 81; k++) if (!g[k]) all[k] = st.c[k];
+  const s4 = SH(); s4.notes = all;
+  pages.push(['Notes on the whole grid', 'Here are the notes for every empty cell. In the app, turn on Notes and tap digits to add or remove them. Every technique from Hard onwards is spotted in the notes, so they\u2019re worth getting right.', { g, show: s4 }]);
+  pages.push(['Keep them accurate', 'When you place a digit, remove it from the notes of every cell that sees it. The app does this for you unless you switch it off in Settings. A missing or wrong note can hide a move, or show one that isn\u2019t there.', { g, show: s4 }]);
+  return pages;
+}
+
+/* ---------- running a lesson ---------- */
+function practiceDef(L) {
+  if (L.practice === 'hatch') return { kind: 'hatch', src: 'easy', rounds: 2, title: L.title };
+  if (L.practice === 'cands') return { kind: 'cands', src: 'medium', n: 2, title: L.title };
+  if (L.tech && !L.practice) { const t = L.tech; return { kind: 'find', techs: [t], src: srcFor(t), notes: E.TECH[t].tier > 0, n: 2, title: L.title }; }
+  return { kind: 'none', title: L.title };
+}
+async function startLesson(id, from) {
+  const L = LESSONS[id];
+  if (D) D.alive = false;
+  const def = practiceDef(L);
+  D = { lesson: id, from: from || null, def, rng: E.mulberry32(randSeed()), k: 0, total: def.kind === 'none' ? 0 : 2, times: [], errors: 0, score: 0,
+    sel: -1, phase: 'load', alive: true, placed: new Set(), toggles: 0, next: null, page: 0, hintIdx: 0 };
+  const me = D;
+  go('drill');
+  $('#d-title').textContent = L.title;
+  hideDrillCoach(); $('#d-prompt').innerHTML = ''; $('#d-prog').style.width = '0%'; $('#d-clock').textContent = '';
+  dBoard.render(blankSpec());
+  const slow = setTimeout(() => loading(true, 'Preparing the lesson'), 150);
+  await tick();
+  let ctx = {};
+  if (L.setup === 'rules' || L.setup === 'plain') {
+    const P = E.generate(L.setup === 'rules' ? 'easy' : 'medium', (me.rng() * 4294967296) >>> 0);
+    ctx.pos = { g: P.puzzle, sol: P.solution };
+  } else if (L.setup === 'cands') {
+    ctx.pos = await buildCands({ src: 'medium' }, me.rng);
+  } else {
+    const t = L.tech, fdef = { techs: [t], src: srcFor(t), notes: E.TECH[t].tier > 0 };
+    ctx.pos = fdef.notes ? await buildFindElim(fdef, me.rng) : await buildFindSingles(fdef, me.rng);
+    if (ctx.pos) {
+      const step = fdef.notes ? ctx.pos.ans[0] : ctx.pos.targets[0];
+      const st = { g: Int8Array.from(ctx.pos.g), c: fdef.notes ? Uint16Array.from(ctx.pos.notes) : E.makeState(ctx.pos.g).c };
+      ctx.frames = walkthrough(step, st);
+    }
+  }
+  clearTimeout(slow); loading(false);
+  if (!me.alive || D !== me) return;
+  if (!ctx.pos) { toast('Couldn\u2019t prepare the lesson. Try again.'); go('train'); return; }
+  const pages = [];
+  if (L.setup === 'rules') pages.push(...rulesPages(ctx));
+  else if (L.setup === 'cands') pages.push(...candPages(ctx));
+  else {
+    const base = { g: ctx.pos.g, notes: ctx.pos.notes || null, show: SH() };
+    for (const [h, p] of L.pages) pages.push([h, p, base]);
+    if (ctx.frames) {
+      pages.push(['An example', 'Here\u2019s one in a real grid. Tap Next to walk through it step by step.', base]);
+      ctx.frames.forEach((f, k) => pages.push([`Example, step ${k + 1} of ${ctx.frames.length}`, f.p, { g: ctx.pos.g, notes: ctx.pos.notes || null, show: f.show }]));
+    }
+  }
+  me.pages = pages.map(([h, p, v]) => ({ h, p, view: v }));
+  me.phase = 'read';
+  showPage(0);
+}
+function showPage(k) {
+  const me = D; if (!me || !me.pages) return;
+  me.page = k; me.phase = 'read';
+  const pg = me.pages[k];
+  me.view = pg.view;
+  renderDrill();
+  const last = k === me.pages.length - 1;
+  const el = $('#d-coach');
+  el.className = 'coach show lesson';
+  el.innerHTML = `<h4>${esc(pg.h)}</h4><p>${esc(pg.p)}</p>
+    <div class="actions">${k > 0 ? '<button class="btn line" id="lp-back">Back</button>' : ''}<button class="btn primary" id="lp-next">${last ? (me.total ? 'Your turn' : 'Finish') : 'Next'}</button></div>`;
+  if (k > 0) $('#lp-back').onclick = () => showPage(k - 1);
+  $('#lp-next').onclick = () => {
+    if (!last) return showPage(k + 1);
+    me.view = null; hideDrillCoach();
+    if (me.total) { toast(me.def.kind === 'find' ? 'Now find one yourself. Stuck? Tap Hint.' : 'Your turn. Stuck? Tap Hint.', 2200); loadNext(true); }
+    else completeLesson();
+  };
+}
+function lessonHint() {
+  if (!D || D.phase !== 'answer') return;
+  const p = D.pos, def = D.def;
+  if (!D.hints) {
+    if (def.kind === 'find') {
+      const step = def.notes ? p.ans[0] : p.targets[0];
+      D.hints = walkthrough(step, { g: Int8Array.from(p.g), c: def.notes ? Uint16Array.from(p.notes) : E.makeState(p.g).c });
+    } else if (def.kind === 'hatch') {
+      const st = E.makeState(p.g), step = allSinglesList(st).find(s => s.p[1] === p.d && (s.t === 'hiddenSingleBox' || s.t === 'hiddenSingleLine')) || allSinglesList(st).find(s => s.p[1] === p.d);
+      D.hints = step ? walkthrough(step, st) : [];
+    } else if (def.kind === 'cands') {
+      const i = p.cell, seen = {}; for (const c of E.PEERS[i]) if (p.g[c] && !seen[p.g[c]]) seen[p.g[c]] = c;
+      const s1 = SH(); addCls(s1, E.PEERS[i], 'hunit'); addCls(s1, Object.values(seen), 'hcell');
+      const s2 = cloneSh(s1); addKey(s2, [i], p.truth); s2.notes = { [i]: p.truth };
+      D.hints = [{ p: `Check ${un(E.ROW[i])}, ${un(9 + E.COL[i])} and ${un(18 + E.BOX[i])}. Those cells already hold ${listOf(Object.keys(seen).map(Number).sort((a, b) => a - b))}, so cross those off.`, show: s1 },
+        { p: `That leaves ${listOf(E.digitsOf(p.truth))}.`, show: s2 }];
+    }
+  }
+  const f = D.hints[Math.min(D.hintIdx, D.hints.length - 1)]; D.hintIdx++;
+  if (!f) return;
+  D.show = f.show; renderDrill();
+  const el = $('#d-coach'); el.className = 'coach show lesson';
+  el.innerHTML = `<h4><span class="dot"></span>Hint ${Math.min(D.hintIdx, D.hints.length)} of ${D.hints.length}</h4><p>${esc(f.p)}</p>`;
+}
+function completeLesson() {
+  const id = D.lesson, L = LESSONS[id], from = D.from;
+  D.alive = false;
+  DB.lessons = DB.lessons || {}; DB.lessons[id] = { done: Date.now() };
+  DB.dlog.push({ ts: Date.now(), id: 'lesson:' + id, s: 0, st: 0 }); trimLogs(); save();
+  const drill = drillForLesson(id), next = L.next && LESSONS[L.next];
+  const el = sheet(`
+    <h2>Lesson complete</h2>
+    <p>You\u2019ve learnt <b>${esc(L.title)}</b>. It\u2019s marked as done in Training, and you can review it any time.</p>
+    ${from === 'game' && DB.game ? '<button class="btn primary" id="lc-game">Back to your game</button>' : ''}
+    ${drill ? `<button class="btn ${from === 'game' && DB.game ? 'ghost' : 'primary'}" id="lc-drill">Start the ${esc(DRILL_BY_ID[drill].title)} drill</button>` : ''}
+    ${next ? `<button class="btn ${drill || (from === 'game' && DB.game) ? 'ghost' : 'primary'}" id="lc-next">Next lesson: ${esc(next.title)}</button>` : ''}
+    <button class="btn line" id="lc-back">Back to training</button>`, () => { if (current === 'drill') go('train'); });
+  const leave = f => () => { sheet._onClose = null; closeSheet(); f(); };
+  if ($('#lc-game', el)) $('#lc-game', el).onclick = leave(resumeGame);
+  if (drill) $('#lc-drill', el).onclick = leave(() => startDrill(drill));
+  if (next) $('#lc-next', el).onclick = leave(() => startLesson(L.next, from));
+  $('#lc-back', el).onclick = leave(() => go('train'));
+}
+
+/* ---------------- TRAIN tab (lessons + drills, belt by belt) ---------------- */
+const BOOK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 21V5"/><path d="M8 7h7"/></svg>';
+const CHECK = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M5 12l5 5 9-10"/></svg>';
+function beltItems(lv) {
+  const out = [], seen = new Set();
+  if (lv === 'easy') { out.push({ lesson: 'rules' }); seen.add('rules'); }
+  for (const d of DRILLS[lv]) {
+    const ls = lessonsForDrill(d);
+    if (ls.length === 1 && !seen.has(ls[0])) { out.push({ lesson: ls[0] }); seen.add(ls[0]); }
+    out.push({ drill: d });
+  }
+  return out;
+}
+function renderTrain() {
+  const lv = S.trainLevel || 'easy', body = $('#train-body');
+  const max = DRILLS[lv].length * 3, got = levelStars(lv);
+  const items = beltItems(lv), lessons = items.filter(x => x.lesson), lessonsDone = lessons.filter(x => lessonDone(x.lesson)).length;
+  const techs = [...new Set(DRILLS[lv].filter(d => d.kind === 'find').flatMap(d => d.techs))].map(t => E.TECH[t].name);
+  body.innerHTML = `
+    ${focusCardHTML('train')}
+    <div class="beltbar">${LEVEL_IDS.map(id => `<button data-l="${id}" class="${id === lv ? 'on' : ''}">${beltHTML(id)}${LVL[id].name}</button>`).join('')}</div>
+    <div class="beltpanel" style="${beltVar(lv)}">
+      <div class="stripe"></div>
+      <h2>${LVL[lv].name} belt</h2>
+      <div class="sub" style="max-width:70%">${techs.length ? esc(techs.join(', ')) : 'Speed, scanning and accuracy'}</div>
+      <div class="bar"><i style="width:${Math.round(got / max * 100)}%"></i></div>
+      <div class="small" style="margin-top:6px">${got} of ${max} stars, ${lessonsDone} of ${lessons.length} lessons</div>
+    </div>
+    <div class="card drill-list">${items.map(x => {
+      if (x.lesson) {
+        const L = LESSONS[x.lesson], done = lessonDone(x.lesson);
+        return `<button class="drill lessonrow" data-lesson="${x.lesson}"><span class="ico">${BOOK}</span><span class="meta"><b>Lesson: ${esc(L.title)}</b><span>${esc(L.blurb || (L.tech ? `What a ${E.TECH[L.tech].name} is and how to spot it.` : ''))}</span></span>${done ? `<span class="done" title="Done">${CHECK}</span>` : '<span class="chip">New</span>'}</button>`;
+      }
+      const d = x.drill, b = drillBest(d.id);
+      return `<button class="drill" data-id="${d.id}"><span class="ico">${ICON[d.kind]}</span><span class="meta"><b>${esc(d.title)}</b><span>${esc(d.blurb)}</span></span>${starsHTML(b ? b.stars : 0)}</button>`;
+    }).join('')}</div>
+    <p class="small" style="text-align:center;margin-top:16px">Each lesson teaches a method from scratch; the drill after it builds speed. Stars come from your speed, and three on every drill earns the belt.</p>`;
+  centerOn($('.beltbar', body));
+  $('.beltbar', body).onclick = e => { const b = e.target.closest('button'); if (!b) return; S.trainLevel = b.dataset.l; save(); renderTrain(); };
+  $('.drill-list', body).onclick = e => {
+    const b = e.target.closest('.drill'); if (!b) return;
+    if (b.dataset.lesson) startLesson(b.dataset.lesson); else openDrillIntro(b.dataset.id);
+  };
+  wireFocus(body);
+}
+
+function openDrillIntro(id) {
+  const d = DRILL_BY_ID[id], b = drillBest(id), ls = lessonsForDrill(d);
+  const comp = d.kind === 'find' && d.techs.length > 1 ? d.techs : null;
+  const todo = ls.filter(l => !lessonDone(l));
+  const learn = d.kind === 'find' ? (comp ? 'The position is set up so that nothing easier works. Any of these techniques may be the answer:' : LEARN[d.techs[0]]) : KIND_LEARN[d.kind];
+  const how = d.kind === 'find'
+    ? (d.notes ? `${d.n} positions with full notes. Tap a cell, then the candidate the pattern removes from it.` : `${d.n} positions, no notes. Tap the cell, then its digit.`) : '';
+  const el = sheet(`
+    <h2>${esc(d.title)}</h2>
+    <div class="row" style="margin-top:2px">${beltHTML(d.lv)}<span class="sub">${LVL[d.lv].name} training</span></div>
+    <div class="learn">${esc(learn)}${comp ? `<div class="complist">${comp.map(t => `<button class="chip" data-lesson="${t}">${lessonDone(t) ? CHECK : BOOK}${esc(E.TECH[t].name)}</button>`).join('')}</div>` : ''}</div>
+    ${how ? `<p class="small" style="margin-top:10px">${esc(how)}</p>` : ''}
+    <p class="small">${esc(parLine(d))} ${esc(bestLine(d, b))}</p>
+    ${todo.length && !comp ? `<p class="sub" style="margin-top:10px">New to this? The lesson explains it from scratch, then lets you practise without a clock.</p>
+      <button class="btn primary" id="di-learn">Start the lesson</button><button class="btn ghost" id="di-go">Start the drill</button>`
+      : `<button class="btn primary" id="di-go">Start</button>${ls.length && !comp ? '<button class="btn line" id="di-learn">Review the lesson</button>' : ''}`}`);
+  $('#di-go', el).onclick = () => { closeSheet(); startDrill(id); };
+  if ($('#di-learn', el)) $('#di-learn', el).onclick = () => { closeSheet(); startLesson(ls[0]); };
+  el.addEventListener('click', e => { const c = e.target.closest('[data-lesson]'); if (c) { closeSheet(); startLesson(c.dataset.lesson); } });
+}
+
+/* ---------------- "your focus": where you get stuck, shown where you'll see it ---------------- */
+function focusButtons(k, primary) {
+  const l = weakLesson(k), d = weakDrill(k);
+  if (!l && !d) return '';
+  return `<div class="row" style="gap:8px;margin-top:8px">${l ? `<button class="btn ${primary && !lessonDone(l) ? 'primary' : 'ghost'} mini-btn" data-lesson="${l}">${lessonDone(l) ? 'Review' : 'Learn'}</button>` : ''}${d ? `<button class="btn ${primary && (!l || lessonDone(l)) ? 'primary' : 'ghost'} mini-btn" data-drill="${d}">Train</button>` : ''}</div>`;
+}
+function focusCardHTML(where) {
+  if (!DB.log.length && !lessonDone('rules')) {
+    return where === 'play' ? `<div class="card focus"><h3>New to sudoku?</h3><p class="sub" style="margin:4px 0 0">Learn the rules in a few minutes, then work up through the techniques one lesson at a time.</p><button class="btn primary" data-lesson="rules" style="margin-top:12px">Start with the basics</button></div>` : '';
+  }
+  const w = weakSpots(), top = w.list.find(x => weakLesson(x.k) || weakDrill(x.k));
+  if (!top || w.n < 2) return '';
+  return `<div class="card focus"><div class="small" style="font-weight:600;color:var(--pen)">YOUR FOCUS</div><h3>${esc(weakLabel(top.k))}</h3>
+    <p class="sub" style="margin:4px 0 0">${top.n} long pause${top.n === 1 ? '' : 's'} in your last ${w.n} solves. ${esc(weakNote(top.k))}</p>${focusButtons(top.k, true)}</div>`;
+}
+function wireFocus(root) {
+  for (const b of $$('.focus [data-lesson], .focus [data-drill]', root)) b.onclick = e => {
+    e.stopPropagation();
+    if (b.dataset.lesson) startLesson(b.dataset.lesson);
+    else { S.trainLevel = DRILL_BY_ID[b.dataset.drill].lv; save(); openDrillIntro(b.dataset.drill); }
+  };
+}
 
 /* =====================================================================
    PROGRESS TRACKING · BACKUPS · INSTALL / OFFLINE
@@ -2141,12 +2701,26 @@ function weakSpots() {
   for (const e of recent) for (const w of (e.w || [])) c[w] = (c[w] || 0) + 1;
   return { n: recent.length, list: Object.keys(c).sort((a, b) => c[b] - c[a]).slice(0, 4).map(k => ({ k, n: c[k] })) };
 }
-function weakLabel(k) { return k === 'scan' ? 'Scanning pauses' : k === 'trial' ? 'Spots needing trial and error' : E.TECH[k] ? E.TECH[k].name : k; }
-function weakNote(k) {
-  return k === 'scan' ? 'An easy single was there, it just took a while to spot.'
-    : k === 'trial' ? 'Beyond the techniques the app teaches.' : 'Nothing easier was left; this technique was the way through.';
+function weakLabel(k) {
+  return { scan: 'Scanning pauses', trial: 'Spots needing trial and error', mistake: 'A wrong digit on the board', notes: 'Writing notes',
+    hiddenSingleLine: 'Hidden Singles in rows and columns', nakedSingle: 'Naked Singles' }[k] || (E.TECH[k] ? E.TECH[k].name : k);
 }
-function weakDrill(k) { return k === 'scan' ? SCAN_DRILL[S.lastLevel] || 'med-hatch' : DRILL_FOR_TECH[k] || null; }
+function weakNote(k) {
+  return {
+    scan: 'An easy single (a Full House or a single in a box) was there; it just took a while to spot.',
+    trial: 'Beyond the techniques the app teaches.',
+    mistake: 'A wrong digit stops anything else from adding up. Check before you commit a digit.',
+    notes: 'Long stretches spent pencil-marking. Faster, accurate notes save a lot of time.',
+    hiddenSingleLine: 'The only easy move was a single in a row or column, which is harder to see than one in a box.',
+    nakedSingle: 'The only move was a cell with one possible digit, which you find by counting rather than scanning.',
+  }[k] || 'Nothing easier was left; this technique was the way through.';
+}
+function weakDrill(k) {
+  if (k === 'scan') return SCAN_DRILL[S.lastLevel] || 'med-hatch';
+  if (k === 'notes') return ['easy', 'medium'].includes(S.lastLevel) ? 'med-cands' : 'hard-cands';
+  return DRILL_FOR_TECH[k] || null;
+}
+function weakLesson(k) { return k === 'scan' ? 'hatch' : k === 'notes' ? 'candidates' : LESSONS[k] ? k : null; }
 
 function drillScore(d, s) { return d.kind === 'sprint' ? `${s} digits` : d.kind === 'run' ? fmt(s * 1000) : `${s.toFixed(1)} s avg`; }
 
@@ -2163,7 +2737,7 @@ function renderMe() {
   const solves = DB.log.filter(e => e.l === lv && e.m === mode), shown = solves.slice(-30);
   const st = DB.stats[lv + '|' + mode] || {};
   const weak = weakSpots();
-  const recentDrills = DB.dlog.slice(-5).reverse().filter(e => DRILL_BY_ID[e.id]);
+  const recentDrills = DB.dlog.filter(e => DRILL_BY_ID[e.id]).slice(-5).reverse();
   const rows = LEVEL_IDS.map(l => {
     const s = DB.stats[l + '|' + mode] || {};
     return `<tr><td>${beltHTML(l)}${LVL[l].name}</td><td>${s.solved || 0}</td><td>${s.best ? fmt(s.best) : '\u2013'}</td><td>${s.solved ? fmt(s.total / s.solved) : '\u2013'}</td></tr>`;
@@ -2197,8 +2771,7 @@ function renderMe() {
     <div class="card">
       <h3>Where you get stuck</h3>
       ${weak.list.length ? `<div class="sub">From the pauses in your last ${weak.n} solve${weak.n === 1 ? '' : 's'}</div>` + weak.list.map(w => {
-        const d = weakDrill(w.k);
-        return `<div class="weak"><div style="flex:1"><b>${esc(weakLabel(w.k))}</b><span class="small">${w.n} long pause${w.n === 1 ? '' : 's'}. ${esc(weakNote(w.k))}</span></div>${d ? `<button class="btn ghost" data-drill="${d}">Train</button>` : ''}</div>`;
+        return `<div class="weak"><div style="flex:1"><b>${esc(weakLabel(w.k))}</b><span class="small">${w.n} long pause${w.n === 1 ? '' : 's'}. ${esc(weakNote(w.k))}</span>${focusButtons(w.k)}</div></div>`;
       }).join('') : `<p class="sub" style="margin:4px 0 0">${DB.log.length ? 'No long pauses in your recent solves. Nice and steady.' : 'After each solve, the app checks your longest pauses and why they happened. The patterns collect here.'}</p>`}
     </div>
 
@@ -2237,7 +2810,10 @@ function renderMe() {
   centerOn($('#me-level'));
   $('#me-level').onclick = e => { const b = e.target.closest('button'); if (b) { renderMe.level = b.dataset.l; renderMe(); } };
   $('#me-mode').onclick = e => { const b = e.target.closest('button'); if (b) { renderMe.mode = b.dataset.m; renderMe(); } };
-  body.onclick = e => { const b = e.target.closest('[data-drill]'); if (b) { S.trainLevel = DRILL_BY_ID[b.dataset.drill].lv; save(); openDrillIntro(b.dataset.drill); } };
+  body.onclick = e => {
+    const l = e.target.closest('[data-lesson]'); if (l) return startLesson(l.dataset.lesson);
+    const b = e.target.closest('[data-drill]'); if (b) { S.trainLevel = DRILL_BY_ID[b.dataset.drill].lv; save(); openDrillIntro(b.dataset.drill); }
+  };
   $('#me-export').onclick = exportProgress;
   $('#me-import').onclick = importProgress;
   $('#me-support').onclick = supportSheet;
