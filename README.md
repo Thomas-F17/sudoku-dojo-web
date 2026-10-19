@@ -2,7 +2,7 @@
 
 Free sudoku with no ads, built for getting faster. Play on "paper", where nothing tells you if a digit is right until the grid is full, and train the exact techniques that slow you down.
 
-**Play now: [thomas-f17.github.io/sudoku-dojo](https://thomas-f17.github.io/sudoku-dojo/)**
+**Play now: [thomas-f17.github.io/sudoku-dojo-web](https://thomas-f17.github.io/sudoku-dojo-web/)**
 
 <p>
   <img src="screenshots/play.png" width="250" alt="A sudoku game in paper mode">
