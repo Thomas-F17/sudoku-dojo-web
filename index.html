@@ -21,7 +21,7 @@
   --round: ui-rounded, "SF Pro Rounded", -apple-system, BlinkMacSystemFont, system-ui, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --cell: 40px;
   color-scheme: light;
-  box-sizing:border-box; padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+  box-sizing:border-box; padding-top:env(safe-area-inset-top,0px);
 }
 @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
   --bg:#0F141C; --surface:#171E29; --surface2:#202937; --ink:#E3E9F3; --muted:#8D99AD; --pen:#8AB0FF; --pen-soft:#22345A;
@@ -46,11 +46,11 @@ h1,h2,h3{font-family:var(--round); margin:0; letter-spacing:-.01em}
 #app{max-width:520px; margin:0 auto; height:100%; position:relative; display:flex; flex-direction:column}
 .screen{display:none; flex:1; min-height:0; flex-direction:column}
 .screen.active{display:flex}
-#s-game,#s-drill{position:relative}
+#s-game,#s-drill{position:relative; padding-bottom:env(safe-area-inset-bottom,0px)}
 .scroll{flex:1; overflow-y:auto; -webkit-overflow-scrolling:touch; padding:8px 18px 24px}
 
 /* ---------- tab bar ---------- */
-.tabbar{display:flex; border-top:1px solid var(--line); background:var(--surface); padding:6px 8px 4px}
+.tabbar{display:flex; border-top:1px solid var(--line); background:var(--surface); padding:6px 8px calc(4px + env(safe-area-inset-bottom,0px))}
 .tabbar.hidden{display:none}
 .tabbar button{flex:1; display:flex; flex-direction:column; align-items:center; gap:2px; font-size:11px; color:var(--muted); padding:4px 0}
 .tabbar button svg{width:24px; height:24px}
@@ -238,8 +238,8 @@ h1,h2,h3{font-family:var(--round); margin:0; letter-spacing:-.01em}
 .table th:first-child,.table td:first-child{text-align:left}
 .table td{padding:10px 4px; border-top:1px solid var(--line); text-align:right}
 .table td:first-child{display:flex; align-items:center; gap:8px; font-weight:600}
-.toast{position:fixed; left:50%; top:calc(env(safe-area-inset-top,0px) + 12px); transform:translate(-50%,-80px); background:var(--ink); color:var(--bg); padding:10px 16px; border-radius:20px; font-size:14px; font-weight:600; z-index:80; transition:transform .25s; max-width:90%; text-align:center}
-.toast.show{transform:translate(-50%,0)}
+.toast{position:fixed; left:50%; top:calc(env(safe-area-inset-top,0px) + 12px); transform:translate(-50%,-80px); background:var(--ink); color:var(--bg); padding:10px 16px; border-radius:20px; font-size:14px; font-weight:600; z-index:80; transition:transform .25s, opacity .25s; opacity:0; pointer-events:none; max-width:90%; text-align:center}
+.toast.show{transform:translate(-50%,0); opacity:1}
 .loading{position:fixed; inset:0; z-index:70; display:none; place-items:center; background:color-mix(in srgb,var(--bg) 70%,transparent)}
 .loading.show{display:grid}
 .loading .box{background:var(--surface); padding:20px 26px; border-radius:18px; box-shadow:var(--shadow); text-align:center; font-weight:600; font-size:15px}
@@ -1161,7 +1161,7 @@ function makePad(el, onDigit) {
 }
 
 function sizeBoards() {
-  const app = $('#app'), W = app.clientWidth, H = app.clientHeight;
+  const app = $('#app'), W = app.clientWidth, H = app.clientHeight - (parseFloat(getComputedStyle($('#s-game')).paddingBottom) || 0);
   const g = Math.floor(Math.min(W - 18, H - (H < 700 ? 238 : 262)) / 9);
   const d = Math.floor(Math.min(W - 18, H - (H < 700 ? 214 : 232)) / 9);
   $('#g-board').style.setProperty('--cell', Math.max(28, Math.min(54, g)) + 'px');
