@@ -283,6 +283,17 @@ h1,h2,h3{font-family:var(--round); margin:0; letter-spacing:-.01em}
 .complist .chip{height:30px; padding:0 10px; font-size:13px}
 .complist .chip svg{width:13px; height:13px}
 .focus{border:1.5px solid var(--pen-soft)}
+.card.focus.compact{padding:6px 4px 6px 14px; margin:2px 0 12px}
+.focus.compact.open{padding-bottom:14px}
+.focus-head{display:flex; align-items:center; gap:2px}
+.focus-toggle{flex:1; min-width:0; display:flex; align-items:center; gap:10px; min-height:40px; text-align:left}
+.focus-tag{font-size:11px; font-weight:700; letter-spacing:.05em; color:var(--pen); flex:none}
+.focus-toggle b{flex:1; min-width:0; font-family:var(--round); font-size:15px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis}
+.chev{width:18px; height:18px; flex:none; color:var(--muted); transition:transform .2s}
+.focus.open .chev{transform:rotate(180deg)}
+.focus-body{display:none; padding-right:10px}
+.focus.open .focus-body{display:block}
+.focus.compact .x{width:40px; height:40px; font-size:22px; color:var(--muted); flex:none}
 .btn.mini-btn{width:auto; height:36px; padding:0 18px; font-size:14px; margin:0}
 @media (prefers-reduced-motion: reduce){*{animation:none !important; transition:none !important}}
 @media (max-height:700px){ .pad button{height:52px; font-size:30px} .tools{padding-top:8px} .tool .ic{width:42px;height:42px} }
@@ -2606,6 +2617,13 @@ function focusCardHTML(where) {
   }
   const w = weakSpots(), top = w.list.find(x => weakLesson(x.k) || weakDrill(x.k));
   if (!top || w.n < 2) return '';
+  if (where === 'train') {
+    if (DB.ui.focusHidden === top.k) return '';
+    const open = !!focusCardHTML.open;
+    return `<div class="card focus compact${open ? ' open' : ''}" id="focus-train">
+      <div class="focus-head"><button class="focus-toggle" id="focus-toggle" aria-expanded="${open}"><span class="focus-tag">YOUR FOCUS</span><b>${esc(weakLabel(top.k))}</b><svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg></button><button class="iconbtn x" id="focus-x" data-k="${top.k}" aria-label="Hide your focus">\u00d7</button></div>
+      <div class="focus-body"><p class="sub" style="margin:4px 0 0">${top.n} long pause${top.n === 1 ? '' : 's'} in your last ${w.n} solves. ${esc(weakNote(top.k))}</p>${focusButtons(top.k, true)}</div></div>`;
+  }
   return `<div class="card focus"><div class="small" style="font-weight:600;color:var(--pen)">YOUR FOCUS</div><h3>${esc(weakLabel(top.k))}</h3>
     <p class="sub" style="margin:4px 0 0">${top.n} long pause${top.n === 1 ? '' : 's'} in your last ${w.n} solves. ${esc(weakNote(top.k))}</p>${focusButtons(top.k, true)}</div>`;
 }
@@ -2615,6 +2633,10 @@ function wireFocus(root) {
     if (b.dataset.lesson) startLesson(b.dataset.lesson);
     else { S.trainLevel = DRILL_BY_ID[b.dataset.drill].lv; save(); openDrillIntro(b.dataset.drill); }
   };
+  const t = $('#focus-toggle', root), card = $('#focus-train', root);
+  if (t) t.onclick = () => { focusCardHTML.open = !focusCardHTML.open; card.classList.toggle('open', focusCardHTML.open); t.setAttribute('aria-expanded', focusCardHTML.open); };
+  const x = $('#focus-x', root);
+  if (x) x.onclick = e => { e.stopPropagation(); DB.ui.focusHidden = x.dataset.k; save(); card.remove(); toast('Hidden. It comes back if your main sticking point changes.', 2600); };
 }
 
 /* =====================================================================
