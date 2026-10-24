@@ -152,6 +152,7 @@ h1,h2,h3{font-family:var(--round); margin:0; letter-spacing:-.01em}
 .tool .badge{position:absolute; top:-2px; right:8px; min-width:22px; height:18px; padding:0 5px; border-radius:9px; font-size:10px; font-weight:700; display:grid; place-items:center; background:var(--muted); color:var(--surface)}
 .tool.on .badge{background:var(--pen)} .tool.on .ic{background:var(--pen-soft); color:var(--pen)}
 .tool:disabled{opacity:.35}
+.tool.empty .ic{opacity:.45}
 .pad{display:grid; grid-template-columns:repeat(9,1fr); gap:2px; padding:6px 8px 10px}
 .pad button{height:62px; font-family:var(--round); font-size:34px; font-weight:400; color:var(--pen); border-radius:10px; position:relative}
 .pad button:active{background:var(--pen-soft)}
@@ -807,6 +808,58 @@ function grade(grid, maxTier) {
   return { solved: true, tier, counts, steps, hard };
 }
 
+
+/* ---- hints: the shortest explanation that actually leads to a digit ----
+   1. a single, if one is available
+   2. else one elimination step that unlocks a single (easiest technique first)
+   3. else the solver's path to the next digit, with every step that isn't
+      needed for that digit removed                                          */
+const SINGLES = ['fullHouse', 'hiddenSingleBox', 'hiddenSingleLine', 'nakedSingle'];
+function firstSingle(s) { for (const id of SINGLES) { const r = TECH[id].find(s, 1); if (r.length) return r[0]; } return null; }
+function singleAt(s, p) {
+  for (const id of SINGLES) { const r = TECH[id].find(s, 300).find(x => x.p[0] === p[0] && x.p[1] === p[1]); if (r) return r; }
+  return null;
+}
+function replay(s0, chain) {               // re-find every step in order; null if any is no longer there
+  const s = cloneState(s0), out = [];
+  for (const step of chain) {
+    let x;
+    if (step.p) x = singleAt(s, step.p);
+    else x = TECH[step.t].find(s, 300).find(c => c.e && step.e.every(([i, d]) => c.e.some(([j, f]) => j === i && f === d)));
+    if (!x) return null;
+    out.push(x); applyStep(s, x);
+  }
+  return out;
+}
+function bestHint(s0) {
+  const one = firstSingle(s0);
+  if (one) return [one];
+  let best = null;
+  for (const T of TECHS) {
+    if (T.tier === 0) continue;
+    if (best && T.tier > best.tier) break;
+    for (const step of T.find(s0, 80)) {
+      const s = cloneState(s0); applyStep(s, step);
+      const sg = firstSingle(s);
+      if (!sg) continue;
+      const rank = T.tier * 10 + SINGLES.indexOf(sg.t);
+      if (!best || rank < best.rank) best = { rank, tier: T.tier, chain: [step, sg] };
+    }
+  }
+  if (best) return best.chain;
+  const s = cloneState(s0); let chain = [];
+  for (let k = 0; k < 60; k++) { const x = nextStep(s, 4); if (!x) break; chain.push(x); applyStep(s, x); if (x.p) break; }
+  if (!chain.length || !chain[chain.length - 1].p) return null;
+  for (let changed = true; changed;) {
+    changed = false;
+    for (let k = 0; k < chain.length - 1; k++) {
+      const trial = replay(s0, chain.slice(0, k).concat(chain.slice(k + 1)));
+      if (trial) { chain = trial; changed = true; break; }
+    }
+  }
+  return chain;
+}
+
 /* ---- human-readable explanation of a step ---- */
 function describe(st) {
   const cn = cellName, ds = a => a.join('/');
@@ -931,7 +984,7 @@ const API = {
   mulberry32, shuffle,
   modelSolve, solveModel, isUnique, satisfiesModel,
   makeState, cloneState, placeIn, applyStep, solvedState, brokenState,
-  TECHS, TECH, nextStep, allSteps, grade, describe,
+  TECHS, TECH, nextStep, allSteps, grade, describe, bestHint,
   LEVELS, LEVEL, randomSolution, digAttempt, generate, generateAsync, balanceOf,
 };
 if (typeof module !== 'undefined' && module.exports) module.exports = API; else root.Engine = API;
@@ -960,7 +1013,7 @@ const DONATE_URL = 'https://buymeacoffee.com/YOUR-NAME';
 
 /* ---------------- storage (per device, per person) ---------------- */
 const DEF = {
-  settings: { autoNotes: true, hlPeers: true, hlSame: true, conflicts: false, counts: false, theme: 'system', lastLevel: 'medium', lastMode: 'paper', trainLevel: 'easy' },
+  settings: { autoNotes: true, hlPeers: true, hlSame: true, conflicts: false, counts: false, theme: 'system', lastLevel: 'medium', lastMode: 'classic', trainLevel: 'easy', unlimitedHints: false },
   stats: {}, drills: {}, game: null, daily: {}, tip: null,
   log: [], dlog: [], ui: { installDismissed: false, lastBackup: 0 }, lessons: {}, v: 2,
 };
@@ -975,7 +1028,17 @@ if (!DB || typeof DB !== 'object') DB = JSON.parse(JSON.stringify(DEF));
 for (const k in DEF) if (DB[k] === undefined) DB[k] = JSON.parse(JSON.stringify(DEF[k]));
 DB.settings = Object.assign({}, DEF.settings, DB.settings);
 DB.ui = Object.assign({}, DEF.ui, DB.ui);
-DB.v = 2;   // v1 (first release) data needs no conversion: new fields are simply added
+if ((DB.v || 1) < 3 && DB.settings.lastMode === 'paper' && !(DB.log || []).some(e => e.m === 'paper')) DB.settings.lastMode = 'classic';
+if ((DB.v || 1) < 4) {   // split each level's totals into solves with and without help, from the solve log
+  for (const key in DB.stats) {
+    const [l, m] = key.split('|'), mine = (DB.log || []).filter(e => e.l === l && e.m === m);
+    const st = DB.stats[key];
+    st.cleanSolved = mine.filter(e => e.c).length;
+    st.cleanTotal = mine.filter(e => e.c).reduce((a, e) => a + e.t, 0);
+    st.helped = mine.filter(e => !e.c).length;
+  }
+}
+DB.v = 4;   // older data needs no other conversion: new fields are simply added
 const S = DB.settings;
 function save() { try { localStorage.setItem('dojo.v1', JSON.stringify(DB)); } catch (e) { /* storage unavailable: play on */ } }
 
@@ -1019,7 +1082,7 @@ const KIND_LEARN = {
   hatch: 'You get one digit. Tap every cell where it can go right now, using any single. New spots open up as you place them. Speed solvers work digit by digit like this.',
   cands: 'One cell pulses. Toggle exactly the digits it could still be (looking only at the placed digits), then check. Fast, accurate notes are what make the hard techniques visible.',
   sprint: 'Place correct digits as fast as you can before the clock runs out. Each wrong digit costs 3 seconds. A finished board is replaced by a new one.',
-  run: 'A full puzzle in paper mode against the clock. Nothing is checked until the grid is full. Afterwards you get a breakdown of where your time went.',
+  run: 'A full puzzle against the clock, in the mode you last chose for a new game (classic or paper). Afterwards you get a breakdown of where your time went.',
 };
 
 const STAR = '<svg viewBox="0 0 24 24" fill="currentColor"><path d="M12 2.5l2.9 6.1 6.6.8-4.9 4.6 1.3 6.6L12 17.3l-5.9 3.3 1.3-6.6L2.5 9.4l6.6-.8z"/></svg>';
@@ -1040,7 +1103,7 @@ const DRILLS = {
     F('easy-hsb', ['hiddenSingleBox'], 'Hidden Single in a box', 'One digit, one possible cell in a box.', 'easy', [6, 12], { notes: false }),
     { id: 'easy-hatch', kind: 'hatch', title: 'Cross-hatching', blurb: 'Find every spot for one digit.', src: 'easy', rounds: 8, par: [5, 10] },
     { id: 'easy-sprint', kind: 'sprint', title: 'Singles sprint', blurb: 'As many correct digits as you can in 60 s.', src: 'easy', seconds: 60, par: [22, 12] },
-    { id: 'easy-run', kind: 'run', title: 'Timed run', blurb: 'Full Easy puzzle, paper mode. Gold under 2:30.', level: 'easy', par: [150, 270] },
+    { id: 'easy-run', kind: 'run', title: 'Timed run', blurb: 'A full Easy puzzle. Gold under 2:30.', level: 'easy', par: [150, 270] },
   ],
   medium: [
     F('med-hsl', ['hiddenSingleLine'], 'Hidden Single in a line', 'The single only a row or column reveals.', 'medium', [8, 16], { notes: false }),
@@ -1223,7 +1286,7 @@ function renderPlay() {
         <button class="btn primary" id="h-continue">Continue</button>
         <button class="btn ghost" id="h-new">New game</button>`
       : `<h1>A fresh grid, every time</h1>
-        <p>Six levels, generated on your phone. Paper mode checks your work only when the grid is full.</p>
+        <p>Six levels, generated on your phone. Play classic, where mistakes show straight away, or paper, where nothing is checked until the grid is full.</p>
         <button class="btn primary" id="h-new">New game</button>`}
     </div>
     <div class="card">
@@ -1232,7 +1295,7 @@ function renderPlay() {
           <h3>Today\u2019s puzzle</h3>
           <div class="sub">${LVL[di.level].name}${dailyStreak() ? `, ${dailyStreak()}-day streak` : ''}</div>
         </div>
-        ${dd ? `<span class="chip">Solved in ${fmt(dd.time)}</span>` : `<button class="btn ghost" style="width:auto;padding:0 20px;height:40px;font-size:15px" id="h-daily">Play</button>`}
+        ${dd ? `<span class="chip">Solved in ${fmt(dd.time)}${dd.clean === false ? ', with help' : ''}</span>` : `<button class="btn ghost" style="width:auto;padding:0 20px;height:40px;font-size:15px" id="h-daily">Play</button>`}
       </div>
     </div>
     ${focus && DB.log.length ? focus : ''}
@@ -1246,7 +1309,7 @@ function renderPlay() {
   `;
   if (g) $('#h-continue').onclick = () => resumeGame();
   $('#h-new').onclick = newGameSheet;
-  if (!dd) $('#h-daily').onclick = () => startGame({ level: di.level, mode: 'paper', seed: di.seed, daily: di.key });
+  if (!dd) $('#h-daily').onclick = () => startGame({ level: di.level, mode: S.lastMode, seed: di.seed, daily: di.key });
   if (suggestion) $('#h-drill').onclick = () => openDrillIntro(suggestion.d.id);
   $('#h-code').onclick = codeSheet;
   wireInstallCard();
@@ -1265,14 +1328,14 @@ function newGameSheet() {
   const el = sheet(`
     <h2>New game</h2>
     <div class="levels">${LEVEL_IDS.map(id => `<button class="lvl" data-l="${id}">${beltHTML(id)}<span>${LVL[id].name}<small>${LEVEL_TAG[id]}</small></span></button>`).join('')}</div>
-    <div class="seg" id="ng-mode"><button data-m="paper">Paper</button><button data-m="classic">Classic</button></div>
+    <div class="seg" id="ng-mode"><button data-m="classic">Classic</button><button data-m="paper">Paper</button></div>
     <div class="mode-note" id="ng-note"></div>
     <button class="btn primary" id="ng-start">Start</button>`);
   const paint = () => {
     $$('.lvl', el).forEach(b => b.classList.toggle('on', b.dataset.l === level));
     $$('#ng-mode button', el).forEach(b => b.classList.toggle('on', b.dataset.m === mode));
     $('#ng-note', el).textContent = mode === 'paper'
-      ? 'Nothing is marked right or wrong while you play. When the grid is full, it\u2019s checked once.'
+      ? 'Nothing is marked right or wrong while you play, just like on paper. The grid is checked once, when it\u2019s full. A good next challenge once classic feels easy.'
       : 'Wrong digits turn red straight away. Three mistakes ends the game.';
   };
   el.addEventListener('click', e => {
@@ -1288,9 +1351,9 @@ function codeSheet() {
     <h2>Play a puzzle code</h2>
     <p class="sub">Every puzzle has a code. A friend who enters the same code gets the same grid, so you can race each other. Nothing is stored or sent anywhere.</p>
     <input class="input" id="pc-in" placeholder="EXP-1A2B3C" autocomplete="off" autocapitalize="characters" spellcheck="false">
-    <div class="seg" id="pc-mode"><button data-m="paper" class="on">Paper</button><button data-m="classic">Classic</button></div>
+    <div class="seg" id="pc-mode">${['classic', 'paper'].map(m => `<button data-m="${m}" class="${m === S.lastMode ? 'on' : ''}">${m === 'paper' ? 'Paper' : 'Classic'}</button>`).join('')}</div>
     <button class="btn primary" id="pc-go">Play</button>`);
-  let mode = 'paper';
+  let mode = S.lastMode;
   $('#pc-mode', el).onclick = e => { const b = e.target.closest('button'); if (!b) return; mode = b.dataset.m; $$('#pc-mode button', el).forEach(x => x.classList.toggle('on', x === b)); };
   $('#pc-go', el).onclick = () => {
     const p = parseCode($('#pc-in', el).value);
@@ -1333,6 +1396,7 @@ function settingsSheet() {
     ['hlPeers', 'Highlight row, column and box', ''],
     ['hlSame', 'Highlight matching digits', 'Also highlights matching notes.'],
     ['conflicts', 'Show rule conflicts in paper mode', 'Duplicates in a unit turn red. Off is closer to real paper.'],
+    ['unlimitedHints', 'Unlimited hints', 'Off: 3 hints per game. Handy while learning. Games with hints never count towards best times or averages.'],
     ['counts', 'Show digits left on the keypad', ''],
   ];
   const el = sheet(`
@@ -1371,7 +1435,12 @@ async function startGame(o) {
   const key = o.level + '|' + o.mode; DB.stats[key] = DB.stats[key] || { played: 0, solved: 0, best: 0, total: 0 }; DB.stats[key].played++;
   openGame();
 }
-function resumeGame() { if (!DB.game) return; G = DB.game; G.paused = false; G.hl = null; openGame(); }
+function resumeGame() {
+  if (!DB.game) return;
+  G = DB.game; G.paused = false; G.hl = null;
+  if (G.revealed && !G.shown) { G.shown = {}; G.vals.forEach((v, i) => { if (v && v !== G.sol[i]) G.shown[i] = v; }); }
+  openGame();
+}
 function openGame() {
   go('game');
   $('#g-title').textContent = G.drill ? DRILL_BY_ID[G.drill].title : G.daily ? 'Today\u2019s puzzle' : 'Sudoku Dojo';
@@ -1433,11 +1502,15 @@ function renderGame() {
       if (S.hlSame && sv && v === sv && i !== sel) cls.push('same');
       if (i === sel) cls.push('sel');
     }
-    if (hl) { if (hl.cells.has(i)) cls.push('hcell'); else if (hl.units.has(i)) cls.push('hunit'); }
-    if (v && !given && ((G.mode === 'classic' || G.revealed) && v !== G.sol[i])) cls.push('err');
+    if (hl && hl.show.cls[i]) cls.push(hl.show.cls[i]);
+    if (v && !given && v !== G.sol[i] && (G.mode === 'classic' || (G.shown && G.shown[i] === v))) cls.push('err');
     if (conf && conf.has(i) && !given) cls.push('err');
     s.cls = cls.join(' ');
-    if (!v) { s.notes = G.notes[i]; if (S.hlSame && sv) s.nhl = E.BIT(sv); }
+    if (!v) {
+      s.notes = hl && hl.notes ? hl.notes[i] : G.notes[i];
+      if (S.hlSame && sv) s.nhl = E.BIT(sv);
+      if (hl) { s.nkey = hl.show.key[i] || 0; s.nx = hl.show.x[i] || 0; }
+    }
   }
   gBoard.render(spec);
   // keypad
@@ -1450,8 +1523,10 @@ function renderGame() {
   $('#g-pad').classList.toggle('notesmode', G.notesMode);
   $('#t-notes').classList.toggle('on', G.notesMode);
   $('#t-notes-badge').textContent = G.notesMode ? 'ON' : 'OFF';
-  $('#t-hint-badge').style.display = G.hints ? '' : 'none';
-  $('#t-hint-badge').textContent = G.hints;
+  const left = hintsLeft();
+  $('#t-hint-badge').style.display = left === Infinity ? 'none' : '';
+  $('#t-hint-badge').textContent = left;
+  $('#t-hint').classList.toggle('empty', left === 0);
 }
 
 function gameInput(d) {
@@ -1469,6 +1544,7 @@ function gameInput(d) {
   } else {
     if (G.vals[i] === d) return;
     const entry = { i, v: G.vals[i], n: G.notes[i], removed: [] };
+    if (G.shown) delete G.shown[i];
     G.vals[i] = d; G.notes[i] = 0;
     if (S.autoNotes) for (const p of E.PEERS[i]) if (G.notes[p] & E.BIT(d)) { G.notes[p] &= ~E.BIT(d); entry.removed.push(p); }
     entry.d = d;
@@ -1491,13 +1567,16 @@ function eraseCell() {
   if (!G.vals[i] && !G.notes[i]) return;
   G.undo.push({ i, v: G.vals[i], n: G.notes[i], removed: [] });
   if (G.vals[i]) G.hist.push({ t: Math.round(G.elapsed), i, d: 0 });
+  if (G.shown) delete G.shown[i];
   G.vals[i] = 0; G.notes[i] = 0; G.hl = null;
   renderGame(); persistGame();
 }
 function undo() {
   if (!G || G.done || G.paused) return;
   const u = G.undo.pop(); if (!u) return;
+  if (u.all) { G.notes = u.all; G.hl = null; hideCoach(); renderGame(); persistGame(); return; }
   if (G.vals[u.i] !== u.v) G.hist.push({ t: Math.round(G.elapsed), i: u.i, d: u.v });
+  if (G.shown) delete G.shown[u.i];
   G.vals[u.i] = u.v; G.notes[u.i] = u.n;
   if (u.d) for (const p of u.removed) G.notes[p] |= E.BIT(u.d);
   G.sel = u.i; G.hl = null;
@@ -1528,8 +1607,23 @@ document.addEventListener('keydown', e => {
 function showCoach(el, html, cls) { el.className = 'coach show ' + (cls || ''); el.innerHTML = html; }
 function hideCoach() { $('#g-coach').className = 'coach'; }
 
+const HINTS_PER_GAME = 3;
+function hintsLeft() { return S.unlimitedHints ? Infinity : Math.max(0, HINTS_PER_GAME - (G ? G.hints : 0)); }
+function showWrong(cells) {
+  G.shown = G.shown || {};
+  for (const i of cells) G.shown[i] = G.vals[i];
+  G.revealed = true; G.unranked = true;
+}
 function gameHint() {
   if (!G || G.done || G.paused) return;
+  if (hintsLeft() === 0) {
+    showCoach($('#g-coach'), `<h4><span class="dot"></span>No hints left</h4>
+      <p>Each game comes with ${HINTS_PER_GAME} hints, and you\u2019ve used them. If you\u2019re learning, you can switch on unlimited hints in Settings. Games with hints never count towards your best times or averages, however many you use.</p>
+      <div class="actions"><button class="btn ghost" id="hc-close">Keep going</button><button class="btn primary" id="hc-set">Settings</button></div>`, 'float');
+    $('#hc-close').onclick = hideCoach;
+    $('#hc-set').onclick = () => { hideCoach(); settingsSheet(); };
+    return;
+  }
   const wrong = [];
   for (let i = 0; i < 81; i++) if (G.vals[i] && G.vals[i] !== G.sol[i]) wrong.push(i);
   G.hints++; G.unranked = true;
@@ -1538,29 +1632,66 @@ function gameHint() {
       <p>${wrong.length === 1 ? 'One digit on the board is wrong' : wrong.length + ' digits on the board are wrong'}, so the logic can\u2019t continue from here.</p>
       <div class="actions"><button class="btn ghost" id="hc-close">Keep looking</button><button class="btn primary" id="hc-show">Show ${wrong.length === 1 ? 'it' : 'them'}</button></div>`, 'float');
     $('#hc-close').onclick = () => hideCoach();
-    $('#hc-show').onclick = () => { G.revealed = true; G.sel = wrong[0]; hideCoach(); renderGame(); };
+    $('#hc-show').onclick = () => { showWrong(wrong); G.sel = wrong[0]; hideCoach(); renderGame(); persistGame(); };
     renderGame(); persistGame(); return;
   }
-  const st = E.makeState(G.vals), steps = [];
-  for (let k = 0; k < 40; k++) { const s = E.nextStep(st, 4); if (!s) break; steps.push(s); E.applyStep(st, s); if (s.p) break; }
-  const place = steps.length && steps[steps.length - 1].p ? steps[steps.length - 1] : null;
-  if (!steps.length) {
+  // start from the placed digits; build on the player's notes only when every empty cell has
+  // notes and none of them has crossed out the right answer (otherwise notes might be guesses)
+  const st0 = E.makeState(G.vals);
+  const empties = []; for (let i = 0; i < 81; i++) if (!G.vals[i]) empties.push(i);
+  const fullNotes = empties.every(i => G.notes[i] && (G.notes[i] & E.BIT(G.sol[i])));
+  if (fullNotes) for (const i of empties) st0.c[i] &= G.notes[i];
+  const chain = E.bestHint(st0);
+  if (!chain || !chain.length) {
     showCoach($('#g-coach'), `<h4><span class="dot"></span>No standard technique applies</h4><p>This position needs trial and error. The solver can still place a correct digit for you.</p>
       <div class="actions"><button class="btn ghost" id="hc-close">Close</button><button class="btn primary" id="hc-place">Place one</button></div>`, 'float');
     $('#hc-close').onclick = hideCoach;
     $('#hc-place').onclick = () => { const i = G.vals.findIndex(v => !v); G.sel = i; hideCoach(); gameInput(G.sol[i]); };
     return;
   }
-  const first = steps[0], T = E.TECH[first.t];
-  G.hl = { cells: new Set(first.hl.cells), units: new Set((first.hl.units || []).flatMap(u => E.UNITS[u])) };
-  const chain = steps.length > 1 ? `<p style="margin-top:6px" class="small">${steps.length > 2 ? `After ${steps.length - 2} more step${steps.length > 3 ? 's' : ''}, that` : 'That'} unlocks a digit: ${esc(E.describe(place))}</p>` : '';
-  showCoach($('#g-coach'), `<h4><span class="dot"></span>${esc(T.name)}</h4><p>${esc(E.describe(first))}</p>${chain}
-    ${LESSONS[first.t] ? `<button class="linkbtn" id="hc-learn" style="margin-top:8px">${lessonDone(first.t) ? 'Review' : 'Learn'} the ${esc(T.name)} lesson</button>` : ''}
-    <div class="actions"><button class="btn ghost" id="hc-close">Got it</button>${place ? `<button class="btn primary" id="hc-place">Place ${place.p[1]} in ${E.cellName(place.p[0])}</button>` : ''}</div>`, 'float');
-  $('#hc-close').onclick = () => { hideCoach(); };
-  if ($('#hc-learn')) $('#hc-learn').onclick = () => { G.hl = null; hideCoach(); G.paused = true; persistGame(); startLesson(first.t, 'game'); };
-  if (place) $('#hc-place').onclick = () => { G.sel = place.p[0]; G.hl = null; hideCoach(); const nm = G.notesMode; G.notesMode = false; gameInput(place.p[1]); if (G) G.notesMode = nm; renderGame(); };
-  renderGame(); persistGame();
+  // one page per step; candidates shown on the board as they stand before that step
+  const needsNotes = chain.length > 1, pages = [], s = E.cloneState(st0);
+  for (const step of chain) {
+    let show;
+    if (step.p) {
+      const f = walkthrough(step, s); show = cloneSh(f[f.length - 1].show); show.place = null; addCls(show, [step.p[0]], 'target');
+    } else show = stepShow(step);
+    pages.push({ step, show, notes: needsNotes ? Array.from(s.c) : null });
+    E.applyStep(s, step);
+  }
+  const notesIncomplete = needsNotes && !fullNotes;
+  G.sel = -1;
+  const showPage = k => {
+    const pg = pages[k], step = pg.step, T = E.TECH[step.t], last = k === pages.length - 1;
+    G.hl = { show: pg.show, notes: pg.notes };
+    renderGame();
+    const intro = k === 0 && needsNotes
+      ? `<p class="small" style="margin-bottom:8px">No digit can be placed with singles right now, so the next move uses notes. ${fullNotes ? 'This builds on your notes.' : 'Every candidate is shown on the board while this hint is open.'}</p>` : '';
+    showCoach($('#g-coach'), `<h4><span class="dot"></span>${esc(T.name)}${pages.length > 1 ? `<span class="small" style="margin-left:auto;font-weight:500">Step ${k + 1} of ${pages.length}</span>` : ''}</h4>
+      ${intro}<p>${last && pages.length > 1 ? 'That unlocks a digit. ' : ''}${esc(E.describe(step))}</p>
+      <div class="row" style="gap:16px;margin-top:8px;flex-wrap:wrap">
+        ${LESSONS[step.t] ? `<button class="linkbtn" id="hc-learn">${lessonDone(step.t) ? 'Review' : 'Learn'} ${esc(T.name)}</button>` : ''}
+        ${notesIncomplete && k === 0 ? '<button class="linkbtn" id="hc-fill">Fill in all my notes</button>' : ''}
+      </div>
+      <div class="actions"><button class="btn ghost" id="hc-back">${k ? 'Back' : 'Close'}</button>${last
+        ? `<button class="btn primary" id="hc-place">Place ${step.p[1]} in ${E.cellName(step.p[0])}</button>`
+        : '<button class="btn primary" id="hc-next">Next step</button>'}</div>`, 'float');
+    $('#hc-back').onclick = () => { if (k) showPage(k - 1); else { G.hl = null; hideCoach(); renderGame(); } };
+    if ($('#hc-next')) $('#hc-next').onclick = () => showPage(k + 1);
+    if ($('#hc-place')) $('#hc-place').onclick = () => {
+      G.sel = step.p[0]; G.hl = null; hideCoach();
+      const nm = G.notesMode; G.notesMode = false; gameInput(step.p[1]); if (G) G.notesMode = nm; renderGame();
+    };
+    if ($('#hc-learn')) $('#hc-learn').onclick = () => { G.hl = null; hideCoach(); G.paused = true; persistGame(); startLesson(step.t, 'game'); };
+    if ($('#hc-fill')) $('#hc-fill').onclick = () => {
+      G.undo.push({ all: G.notes.slice() });
+      for (const i of empties) G.notes[i] = st0.c[i];
+      G.hist.push({ t: Math.round(G.elapsed), i: -1, n: 1 });
+      persistGame(); toast('Notes filled in. Undo puts yours back.', 2200); $('#hc-fill').remove();
+    };
+  };
+  showPage(0);
+  persistGame();
 }
 
 /* ---------- game menu ---------- */
@@ -1575,7 +1706,7 @@ $('#g-menu').onclick = () => {
     <button class="btn line" id="gm-new">New game</button>`);
   $('#gm-copy', el).onclick = () => { try { navigator.clipboard.writeText(G.code).then(() => toast('Code copied'), () => toast(G.code)); } catch (e) { toast(G.code); } };
   $('#gm-restart', el).onclick = () => {
-    Object.assign(G, { vals: G.puzzle.slice(), notes: new Array(81).fill(0), hist: [], undo: [], mistakes: 0, elapsed: 0, revealed: false, sel: -1, hl: null, unranked: G.hints > 0 });
+    Object.assign(G, { vals: G.puzzle.slice(), notes: new Array(81).fill(0), hist: [], undo: [], mistakes: 0, elapsed: 0, shown: {}, sel: -1, hl: null, unranked: G.hints > 0 || G.revealed });
     closeSheet(); hideCoach(); renderGame(); persistGame();
   };
   $('#gm-settings', el).onclick = () => { closeSheet(); settingsSheet(); };
@@ -1599,7 +1730,7 @@ function checkComplete() {
     <button class="btn primary" id="cc-keep">Keep solving</button>
     <button class="btn line" id="cc-show">Show mistakes</button>`);
   $('#cc-keep', el).onclick = closeSheet;
-  $('#cc-show', el).onclick = () => { G.revealed = true; G.unranked = true; closeSheet(); renderGame(); persistGame(); };
+  $('#cc-show', el).onclick = () => { showWrong(G.vals.map((v, i) => i).filter(i => G.vals[i] !== G.sol[i])); closeSheet(); renderGame(); persistGame(); };
 }
 
 function winGame() {
@@ -1608,9 +1739,10 @@ function winGame() {
   const st = DB.stats[key] = DB.stats[key] || { played: 1, solved: 0, best: 0, total: 0 };
   const clean = !G.unranked && !G.revealed && !G.hints;
   st.solved++; st.total += t;
+  if (clean) { st.cleanSolved = (st.cleanSolved || 0) + 1; st.cleanTotal = (st.cleanTotal || 0) + t; } else st.helped = (st.helped || 0) + 1;
   const newBest = clean && (!st.best || t < st.best);
   if (newBest) st.best = t;
-  if (G.daily && !DB.daily[G.daily]) DB.daily[G.daily] = { time: t };
+  if (G.daily && !DB.daily[G.daily]) DB.daily[G.daily] = { time: t, hints: G.hints, clean };
   let stars = 0;
   if (G.drill) {
     const d = DRILL_BY_ID[G.drill], s = t / 1000;
@@ -1700,13 +1832,14 @@ function winSheet(g, an, o) {
   }).join('') : `<p class="sub">No long pauses. Your pace stayed close to ${secs(an.median)} per digit all the way through.</p>`;
   const el = sheet(`
     <h2>${o.newBest ? 'New best time' : 'Solved'}</h2>
-    <div class="row" style="margin-top:2px">${beltHTML(g.level)}<span class="sub">${LVL[g.level].name}, ${g.mode === 'paper' ? 'paper mode' : 'classic'}${o.clean ? '' : ', assisted'}</span></div>
+    <div class="row" style="margin-top:2px">${beltHTML(g.level)}<span class="sub">${LVL[g.level].name}, ${g.mode === 'paper' ? 'paper mode' : 'classic'}${o.clean ? '' : `, ${g.hints ? (g.hints === 1 ? '1 hint' : g.hints + ' hints') : 'mistakes shown'}`}</span></div>
     ${g.drill ? starsHTML(o.stars, 'bigstars') : ''}
     <div class="statgrid">
       <div class="stat"><b>${fmt(g.elapsed)}</b><span>Time</span></div>
       <div class="stat"><b>${st && st.best ? fmt(st.best) : '\u2013'}</b><span>Best</span></div>
       <div class="stat"><b>${an.median ? secs(an.median) : '\u2013'}</b><span>Per digit</span></div>
     </div>
+    ${o.clean ? '' : '<p class="small" style="margin:-6px 0 12px">Solved with help, so this time isn\u2019t counted in your best or average.</p>'}
     <h3 style="font-size:17px;margin-top:4px">Where the time went</h3>
     ${stallHTML}
     ${g.drill ? `<button class="btn primary" id="ws-again">Run it again</button>` : `<button class="btn primary" id="ws-new">New game</button>`}
@@ -1864,7 +1997,7 @@ function buildPosition(D) {
 /* ---------- drill flow ---------- */
 async function startDrill(id) {
   const def = DRILL_BY_ID[id];
-  if (def.kind === 'run') return startGame({ level: def.level, mode: 'paper', seed: randSeed(), drill: def.id });
+  if (def.kind === 'run') return startGame({ level: def.level, mode: S.lastMode, seed: randSeed(), drill: def.id });
   D = { def, rng: E.mulberry32(randSeed()), k: 0, total: def.n || def.rounds || 0, times: [], errors: 0, score: 0, sel: -1, phase: 'load', alive: true, placed: new Set(), toggles: 0, next: null };
   if (def.kind === 'sprint') { D.timeLeft = def.seconds * 1000; D.total = 0; }
   go('drill');
@@ -2403,7 +2536,7 @@ function rulesPages(ctx) {
   pages.push(['Cells that \u201csee\u201d each other', 'Two cells \u201csee\u201d each other when they share a row, column or box. Every cell sees 20 others (shaded). Cells that see each other can never hold the same digit, and every technique you\u2019ll learn grows from that.', { g, show: s }]);
   const nm = SH(); addCls(nm, [22], 'target'); addCls(nm, E.UNITS[2], 'ray'); addCls(nm, E.UNITS[9 + 4], 'ray');
   pages.push(['Naming cells', 'Explanations name cells by row and column. R3C5 means row 3, column 5, counting from the top left. It\u2019s outlined here.', { g, show: nm }]);
-  pages.push(['Playing in this app', 'Tap a cell, then tap a digit on the keypad. Turn on Notes to write small pencil marks instead of answers. Erase clears a cell, Undo steps back. In paper mode nothing tells you if a digit is right until the grid is full, just like on paper. Next up: your first technique, the Full House.', { g, show: SH() }]);
+  pages.push(['Playing in this app', 'Tap a cell, then tap a digit on the keypad. Turn on Notes to write small pencil marks instead of answers. Erase clears a cell, Undo steps back. There are two ways to play. In classic mode, the default, a wrong digit turns red straight away. In paper mode nothing tells you if a digit is right until the grid is full, just like on paper. You choose each time you start a new game. Next up: your first technique, the Full House.', { g, show: SH() }]);
   return pages;
 }
 function candPages(ctx) {
@@ -2700,15 +2833,17 @@ function trendSVG(list) {
   const best = Math.min(...clean);
   if (isFinite(best)) g += `<line x1="${L}" x2="${W - R}" y1="${y(best).toFixed(1)}" y2="${y(best).toFixed(1)}" style="stroke:var(--ok)" stroke-width="1.5" stroke-dasharray="4 4"/>`;
   g += `<polyline fill="none" style="stroke:var(--pen)" stroke-opacity=".35" stroke-width="1.5" points="${v.map((s, i) => x(i).toFixed(1) + ',' + y(s).toFixed(1)).join(' ')}"/>`;
-  if (n >= 3) {
-    const avg = v.map((_, i) => { const a = v.slice(Math.max(0, i - 4), i + 1); return a.reduce((p, q) => p + q, 0) / a.length; });
-    g += `<polyline fill="none" style="stroke:var(--star)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" points="${avg.map((s, i) => x(i).toFixed(1) + ',' + y(s).toFixed(1)).join(' ')}"/>`;
+  const ci = list.map((e, i) => e.c ? i : -1).filter(i => i >= 0);
+  if (ci.length >= 3) {
+    const pts = ci.map((i, k) => { const a = ci.slice(Math.max(0, k - 4), k + 1).map(j => v[j]); return [x(i), y(a.reduce((p, q) => p + q, 0) / a.length)]; });
+    g += `<polyline fill="none" style="stroke:var(--star)" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round" points="${pts.map(([a, b]) => a.toFixed(1) + ',' + b.toFixed(1)).join(' ')}"/>`;
   }
   g += list.map((e, i) => `<circle cx="${x(i).toFixed(1)}" cy="${y(v[i]).toFixed(1)}" r="3.5" style="fill:${e.c ? 'var(--pen)' : 'var(--surface)'};stroke:var(--pen)" stroke-width="1.5"><title>${relDay(e.ts)}: ${fmt(e.t)}${e.c ? '' : ' (assisted)'}</title></circle>`).join('');
   g += `<text x="${L}" y="${H - 2}" style="fill:var(--muted)" font-size="10">${relDay(list[0].ts)}</text><text x="${W - R}" y="${H - 2}" text-anchor="end" style="fill:var(--muted)" font-size="10">${relDay(list[n - 1].ts)}</text>`;
   return `<svg viewBox="0 0 ${W} ${H}" class="trend" role="img" aria-label="Solve times">${g}</svg>`;
 }
 function trendSummary(list) {
+  list = list.filter(e => e.c);
   if (list.length < 6) return '';
   const k = Math.min(5, Math.floor(list.length / 2));
   const avg = a => a.reduce((p, e) => p + e.t, 0) / a.length;
@@ -2749,7 +2884,7 @@ function drillScore(d, s) { return d.kind === 'sprint' ? `${s} digits` : d.kind 
 
 /* ---------- PROGRESS tab ---------- */
 function renderMe() {
-  const body = $('#me-body'), mode = renderMe.mode || 'paper';
+  const body = $('#me-body'), mode = renderMe.mode || S.lastMode;
   if (!renderMe.level) {
     const cnt = {}; for (const e of DB.log) cnt[e.l] = (cnt[e.l] || 0) + 1;
     renderMe.level = Object.keys(cnt).sort((a, b) => cnt[b] - cnt[a])[0] || S.lastLevel || 'medium';
@@ -2761,9 +2896,10 @@ function renderMe() {
   const st = DB.stats[lv + '|' + mode] || {};
   const weak = weakSpots();
   const recentDrills = DB.dlog.filter(e => DRILL_BY_ID[e.id]).slice(-5).reverse();
+  const helpedN = LEVEL_IDS.reduce((n, l) => n + ((DB.stats[l + '|' + mode] || {}).helped || 0), 0);
   const rows = LEVEL_IDS.map(l => {
     const s = DB.stats[l + '|' + mode] || {};
-    return `<tr><td>${beltHTML(l)}${LVL[l].name}</td><td>${s.solved || 0}</td><td>${s.best ? fmt(s.best) : '\u2013'}</td><td>${s.solved ? fmt(s.total / s.solved) : '\u2013'}</td></tr>`;
+    return `<tr><td>${beltHTML(l)}${LVL[l].name}</td><td>${s.solved || 0}</td><td>${s.best ? fmt(s.best) : '\u2013'}</td><td>${s.cleanSolved ? fmt(s.cleanTotal / s.cleanSolved) : '\u2013'}</td></tr>`;
   }).join('');
 
   body.innerHTML = `
@@ -2783,10 +2919,10 @@ function renderMe() {
     <div class="card">
       <h3>Solve times</h3>
       <div class="beltbar" id="me-level" style="margin-top:8px">${LEVEL_IDS.map(id => `<button data-l="${id}" class="${id === lv ? 'on' : ''}">${beltHTML(id)}${LVL[id].name}</button>`).join('')}</div>
-      <div class="seg" id="me-mode"><button data-m="paper" class="${mode === 'paper' ? 'on' : ''}">Paper</button><button data-m="classic" class="${mode === 'classic' ? 'on' : ''}">Classic</button></div>
+      <div class="seg" id="me-mode"><button data-m="classic" class="${mode === 'classic' ? 'on' : ''}">Classic</button><button data-m="paper" class="${mode === 'paper' ? 'on' : ''}">Paper</button></div>
       ${shown.length >= 2 ? `
         ${trendSVG(shown)}
-        <div class="legend"><span><i style="background:var(--pen)"></i>Solve</span><span><i style="background:var(--star)"></i>5-solve average</span><span><i class="dash"></i>Best</span><span>Lower is faster</span></div>
+        <div class="legend"><span><i style="background:var(--pen)"></i>Solve (hollow: with help)</span><span><i style="background:var(--star)"></i>5-solve average</span><span><i class="dash"></i>Best</span><span>Lower is faster</span></div>
         <p class="sub" style="margin:8px 0 0">${esc(trendSummary(shown)) || `Best ${st.best ? fmt(st.best) : '\u2013'}, average ${st.solved ? fmt(st.total / st.solved) : '\u2013'}.`}</p>`
       : `<p class="sub" style="margin:14px 0 4px">${shown.length === 1 ? `One ${LVL[lv].name} solve so far (${fmt(shown[0].t)}). One more and your trend appears here.` : `Solve two ${LVL[lv].name} puzzles in ${mode} mode to see your trend.`}</p>`}
     </div>
@@ -2810,7 +2946,7 @@ function renderMe() {
     <div class="card">
       <h3>Personal bests</h3>
       <table class="table" style="margin-top:6px"><tr><th>Level</th><th>Solved</th><th>Best</th><th>Average</th></tr>${rows}</table>
-      <p class="small" style="margin-bottom:0">${mode === 'paper' ? 'Paper' : 'Classic'} mode. Best times only count solves without hints or revealed mistakes.</p>
+      <p class="small" style="margin-bottom:0">${mode === 'paper' ? 'Paper' : 'Classic'} mode. Best and average only count solves without hints or revealed mistakes.${helpedN === 1 ? ` 1 of your ${mode} solves had help and is left out.` : helpedN ? ` ${helpedN} of your ${mode} solves had help and are left out.` : ''}</p>
     </div>
 
     <div class="card">

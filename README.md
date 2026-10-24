@@ -2,7 +2,7 @@
 
 Free sudoku with no ads, built for getting better. Never played before? The app teaches you from the rules up to expert techniques, one lesson at a time. Already fast? Play on "paper", where nothing tells you if a digit is right until the grid is full, and train the exact techniques that slow you down.
 
-**Play now: [YOUR-USERNAME.github.io/sudoku-dojo](https://YOUR-USERNAME.github.io/sudoku-dojo/)**
+**Play now: [thomas-f17.github.io/sudoku-dojo-web](https://thomas-f17.github.io/sudoku-dojo-web/)**
 
 <p>
   <img src="screenshots/play.png" width="200" alt="A sudoku game in paper mode">
@@ -32,7 +32,7 @@ Tap a cell, then tap a number. The row, column and box of the selected cell are 
 | **Notes** | While on, numbers go in as small pencil marks instead of answers. Tap a number again to remove its mark. |
 | **Erase** | Clears the selected cell. |
 | **Undo** | Steps back one move. |
-| **Hint** | Names the next technique that works, highlights the cells involved and explains it. You can then place the digit, keep going on your own, or open the lesson for that technique. |
+| **Hint** | Shows the shortest line of reasoning to the next digit, one step at a time, with the cells involved highlighted. If no digit can be placed with singles, it shows every candidate on the board while the hint is open, and can fill in your notes for you. You can place the digit, keep going on your own, or open the lesson for that technique. You get 3 hints per game (the number on the button); switch on **Unlimited hints** in Settings while you're learning. |
 | ⏸ | Pauses and hides the grid. The game also pauses when you leave the app. |
 | ⋯ | Puzzle code, restart, settings. |
 
@@ -40,12 +40,12 @@ When you place a digit, it's removed from the notes in its row, column and box a
 
 On a computer you can use the keyboard: 1–9 to enter, Backspace to erase, N for notes, arrow keys to move, Ctrl/Cmd+Z to undo.
 
-### Paper mode and classic mode
+### Classic mode and paper mode
 
-You choose when starting a new game.
+You choose when starting a new game, and the app remembers your choice for next time. Today's puzzle and timed runs use it too.
 
-- **Paper** (the default): nothing is marked right or wrong while you play, just like a puzzle on paper. When the grid is full it's checked once. If something's wrong you're told how many cells, and can keep solving or ask to see them.
-- **Classic:** wrong digits turn red immediately. Three mistakes ends the game, though you can choose to keep going.
+- **Classic** (the default): wrong digits turn red immediately, so you can't go far down the wrong path. Three mistakes ends the game, though you can choose to keep going.
+- **Paper:** nothing is marked right or wrong while you play, just like a puzzle on paper. When the grid is full it's checked once. If something's wrong you're told how many cells, and can keep solving or ask to see them. Only the digits that were wrong at that moment are marked, and seeing them counts as help. A good next challenge once classic feels comfortable.
 
 ### Levels
 
@@ -90,7 +90,7 @@ Drills build speed once you know a method. Each earns up to three stars dependin
 - **Cross-hatching:** you get one digit. Tap every cell where it can go right now; new spots open up as you place them.
 - **Note accuracy:** one cell pulses. Mark exactly the digits it could still be, then tap **Check**.
 - **Sprints:** place as many correct digits as you can before time runs out. Each wrong digit costs 3 seconds. The Extreme "blind sprint" switches off all highlighting.
-- **Timed run:** a full puzzle in paper mode against a target time.
+- **Timed run:** a full puzzle against a target time, in the mode you last chose.
 
 Explanations refer to cells by row and column: **R3C5** means row 3, column 5, counting from the top left.
 
@@ -116,7 +116,7 @@ The **Progress** tab shows:
 - your stars on every training belt and your recent drill scores
 - best and average times for every level
 
-Best times only count solves done without hints and without revealing mistakes.
+Best times and averages only count solves done without help: no hints, and no mistakes revealed. Solves with help still count towards your streak and activity, show as hollow dots on the chart, and are listed separately, so a game finished with lots of hints never sits alongside one you solved on your own.
 
 ### Moving or backing up your progress
 
@@ -130,6 +130,7 @@ Found under ⚙ on the home screen or the ⋯ menu during a game:
 - **Highlight row, column and box** of the selected cell
 - **Highlight matching digits** (and matching notes)
 - **Show rule conflicts in paper mode:** turns duplicates in a row, column or box red. Off by default, since paper wouldn't tell you.
+- **Unlimited hints:** removes the limit of 3 hints per game. Handy while learning; games with hints never count towards best times or averages either way.
 - **Show digits left on the keypad**
 - **Appearance:** follow your device, or always light or dark
 

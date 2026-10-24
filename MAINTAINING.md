@@ -40,7 +40,7 @@ Puzzle codes and Today's puzzle are produced by the generator, so whenever the g
 | File | Purpose |
 |---|---|
 | `index.html` | The whole app: solver, generator, game, training, progress tracking. |
-| `README.md` | The player guide shown on the GitHub repo page. Replace `YOUR-USERNAME` in it with your GitHub username. |
+| `README.md` | The player guide shown on the GitHub repo page. Its "Play now" link points to thomas-f17.github.io/sudoku-dojo-web. |
 | `screenshots/` | Images used by README.md. |
 | `manifest.webmanifest` | Name, icon and colours used when installed. |
 | `sw.js` | Makes the app work offline. |
